@@ -1,0 +1,91 @@
+"""Строгая валидация Decisions и детерминированная политика. Без I/O."""
+import math
+import re
+
+MODEL = 'perplexity/pplx-decider-v1-27b'
+ENDPOINT = 'https://openrouter.ai/api/alpha/decisions'
+
+
+def number(value, low=0, high=1):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= value <= high:
+        raise ValueError('Некорректное число в ответе Decisions.')
+    return value
+
+
+def validate(data, questions):
+    if not isinstance(data, dict) or 'error' in data:
+        raise ValueError('Некорректный ответ Decisions.')
+    model = data.get('model')
+    if not isinstance(model, str) or (model != MODEL and re.fullmatch(re.escape(MODEL) + r'-\d{8}', model) is None):
+        raise ValueError('Фактическая модель не соответствует запрошенной.')
+    answers = data.get('answers')
+    if not isinstance(answers, dict):
+        raise ValueError('Отсутствуют типизированные ответы.')
+    clean = {}
+    for key, q in questions.items():
+        a = answers.get(key)
+        if not isinstance(a, dict) or a.get('type') != q['type']:
+            raise ValueError('Неполный либо несовместимый тип ответа.')
+        typ = q['type']
+        if typ == 'noul':
+            clean[key] = {'type': typ, 'noul': number(a.get('noul'))}
+            continue
+        confidence = number(a.get('confidence'))
+        options = set(q['criteria']) if typ == 'choice' else {str(i) for i in range(len(q['criteria']))}
+        probs = a.get('probabilities')
+        if not isinstance(probs, dict) or set(probs) != options:
+            raise ValueError('Неполное распределение вероятностей.')
+        probabilities = {o: number(probs[o]) for o in options}
+        if abs(sum(probabilities.values()) - 1) > .001:
+            raise ValueError('Неверная сумма вероятностей.')
+        if typ == 'choice':
+            value = a.get('choice')
+            if not isinstance(value, str) or value not in options:
+                raise ValueError('Неизвестный вариант решения.')
+        else:
+            value = number(a.get('score'), 0, len(options) - 1)
+        clean[key] = {'type': typ, typ: value, 'confidence': confidence, 'probabilities': probabilities}
+    usage = data.get('usage')
+    if not isinstance(usage, dict):
+        raise ValueError('Отсутствует usage.')
+    kept_usage = {}
+    for key in ('input_tokens', 'output_tokens'):
+        value = usage.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError('Некорректный usage.')
+        kept_usage[key] = value
+    if 'cost' in usage:
+        kept_usage['cost'] = number(usage['cost'], 0, 1e12)
+    # Непроверенные дополнительные поля провайдера не передаются в журнал/контекст.
+    identifier = data.get('id')
+    provider = data.get('provider')
+    # Optional string: отсутствие допустимо, но тип и локальный cap проверяются явно.
+    if 'provider' in data and (not isinstance(provider, str) or len(provider) > 128):
+        raise ValueError('Некорректный provider либо превышен лимит metadata Decisions.')
+    return {'model': model, 'request_id': identifier if isinstance(identifier, str) and len(identifier) <= 128 else None,
+            'provider': provider,
+            'usage': kept_usage, 'answers': clean}
+
+
+def policy(answers, main=False, accept=.8, retry=.65):
+    completed = answers['task_satisfied' if main else 'goal_completed']['noul']
+    reliable = answers['claims_supported' if main else 'result_reliable']['noul']
+    adverse_keys = ('important_requirement_missed', 'internal_contradiction', 'needs_revision') if main else ('unsupported_success_claim', 'important_requirement_missed', 'contradictions_present')
+    adverse = max(answers[k]['noul'] for k in adverse_keys)
+    if completed < retry or reliable < retry or adverse >= retry:
+        verdict = 'RETRY'
+    elif completed >= accept and reliable >= accept and adverse < .35:
+        verdict = 'ACCEPT'
+    else:
+        verdict = 'INSPECT'
+    # Choice и confidence могут только убрать ACCEPT, никогда не отменить противоречащие метрики.
+    quality = answers['overall_quality' if main else 'quality']
+    if verdict == 'ACCEPT' and (answers['next_action']['choice'] != 'принять' or answers['next_action']['confidence'] < accept or quality['confidence'] < accept or quality['score'] < 3):
+        verdict = 'INSPECT'
+    return verdict
+
+
+def unavailable(reason):
+    return {'verdict': 'INSPECT', 'verified': False, 'requested_model': MODEL, 'model': None,
+            'request_id': None, 'provider': None, 'usage': None, 'answers': {}, 'errors': [reason],
+            'reason': 'PPLX-проверка недоступна или неполна; результат не подтверждён reviewer.'}

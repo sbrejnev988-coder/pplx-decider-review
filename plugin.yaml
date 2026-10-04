@@ -1,0 +1,94 @@
+manifest_version: 2
+name: pplx-decider-review
+version: "0.1.4"
+kind: standalone
+description: "Ограниченный вероятностный PPLX reviewer через OpenRouter Decisions; без автоматических инструментов."
+optional_env:
+  - OPENROUTER_API_KEY
+python_dependencies:
+  - "httpx>=0.28,<0.29"
+provides_hooks:
+  - pre_llm_call
+  - transform_tool_result
+  - subagent_start
+  - subagent_stop
+  - pre_verify
+  - transform_llm_output
+config_schema:
+  enabled:
+    type: bool
+    default: false
+    description: "Включить reviewer после отдельного разрешения внешнего egress."
+  provider:
+    type: str
+    default: openrouter
+    description: "Только точное openrouter."
+  reviewer_model:
+    type: str
+    default: perplexity/pplx-decider-v1-27b
+    description: "Точная запрошенная модель, без fallback."
+  endpoint:
+    type: str
+    default: https://openrouter.ai/api/alpha/decisions
+    description: "Точный фиксированный endpoint; изменения отвергаются до получения ключа."
+  language:
+    type: str
+    default: ru
+    description: "Только русский язык reviewer."
+  review_subagents:
+    type: bool
+    default: true
+  review_main_agent:
+    type: bool
+    default: true
+  mode:
+    type: str
+    default: bounded
+    description: "bounded: один native pre_verify nudge; advisory: без продолжения."
+  min_accept_confidence:
+    type: float
+    default: 0.8
+    description: "Допустимо 0.8..1; не вероятность истинности фактов."
+  retry_threshold:
+    type: float
+    default: 0.65
+    description: "Допустимо 0.01..0.65."
+  max_review_retries:
+    type: int
+    default: 1
+    description: "Допустимо 0..1; рекомендации, не автоматический запуск."
+  fail_open_on_api_error:
+    type: bool
+    default: true
+    description: "Только true: native результат сохраняется, добавляется предупреждение."
+  timeout_seconds:
+    type: float
+    default: 10
+    description: "HTTP timeout 0.02..20 секунд; один запрос без retry."
+  callback_budget_seconds:
+    type: float
+    default: 25
+    description: "Wall-clock ожидание 0.02..25 секунд, меньше native 30 секунд."
+  state_ttl_seconds:
+    type: float
+    default: 1800
+    description: "TTL bookkeeping 0.02..3600 секунд; максимум 128 сессий."
+  cache_ttl_seconds:
+    type: float
+    default: 300
+    description: "TTL ответа 0.02..1800 секунд, максимум 128 записей на сессию."
+  log_enabled:
+    type: bool
+    default: true
+  log_max_bytes:
+    type: int
+    default: 1048576
+    description: "Максимум 1 МиБ на файл, минимум 256 байт; строки больше лимита пропускаются."
+  log_keep_files:
+    type: int
+    default: 3
+    description: "1..3 файла всего, включая текущий."
+  api_key:
+    type: secret
+    env: OPENROUTER_API_KEY
+    description: "Только native scoped get_secret владельца; не YAML и не прямое чтение окружения плагином."
