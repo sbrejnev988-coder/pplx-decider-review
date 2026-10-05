@@ -140,4 +140,5 @@ def publication_env(request, record_property, scenario):
     request.addfinalizer(runtime.close)
     record_property('publication_test_mode', 'unit: synthetic owner, no native SDK claim')
     record_property('production_source', str(ROOT))
-    return types.SimpleNamespace(runtime=runtime, ctx=unit.ctx, home=home, calls=unit.calls)
+    return types.SimpleNamespace(runtime=runtime, ctx=unit.ctx, home=home, calls=unit.calls,
+                                 redacted=unit.redacted)

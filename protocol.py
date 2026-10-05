@@ -16,7 +16,7 @@ def validate(data, questions):
     if not isinstance(data, dict) or 'error' in data:
         raise ValueError('Некорректный ответ Decisions.')
     model = data.get('model')
-    if not isinstance(model, str) or (model != MODEL and re.fullmatch(re.escape(MODEL) + r'-\d{8}', model) is None):
+    if not isinstance(model, str) or (model != MODEL and re.fullmatch(re.escape(MODEL) + r'-[0-9]{8}', model) is None):
         raise ValueError('Фактическая модель не соответствует запрошенной.')
     answers = data.get('answers')
     if not isinstance(answers, dict):
@@ -36,14 +36,21 @@ def validate(data, questions):
         if not isinstance(probs, dict) or set(probs) != options:
             raise ValueError('Неполное распределение вероятностей.')
         probabilities = {o: number(probs[o]) for o in options}
-        if abs(sum(probabilities.values()) - 1) > .001:
+        if abs(math.fsum(probabilities.values()) - 1) > .001:
             raise ValueError('Неверная сумма вероятностей.')
         if typ == 'choice':
             value = a.get('choice')
             if not isinstance(value, str) or value not in options:
                 raise ValueError('Неизвестный вариант решения.')
+            if probabilities[value] < max(probabilities.values()):
+                raise ValueError('Выбранный вариант не является победителем распределения.')
         else:
             value = number(a.get('score'), 0, len(options) - 1)
+            expected = math.fsum(int(o) * p for o, p in probabilities.items())
+            # Локальная политика округления, не гарантия точности провайдера.
+            tolerance = .001 + .001 * (len(options) - 1)
+            if abs(value - expected) > tolerance:
+                raise ValueError('Score противоречит среднему распределения.')
         clean[key] = {'type': typ, typ: value, 'confidence': confidence, 'probabilities': probabilities}
     usage = data.get('usage')
     if not isinstance(usage, dict):

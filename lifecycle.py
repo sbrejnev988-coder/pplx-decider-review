@@ -1,6 +1,6 @@
 """Native lifecycle provenance: observers без сети и без разрешения действий."""
 import re
-from .state import identifier, meaningful, bounded_put, TERMINAL
+from .state import identifier, meaningful, bounded_put, TERMINAL, fingerprint
 from .transport import scrub, scrub_text
 
 COMPLETE = re.compile(r'^\[ASYNC DELEGATION (?:BATCH )?COMPLETE — ([A-Za-z0-9_.:-]{1,128})\]')
@@ -15,11 +15,16 @@ class Lifecycle:
             if self.closed:
                 return None
             _, state = self.store.session(parent_session_id)
-            if state is None or not cid or not subid:
+            if state is None or not cid or not subid or cid == identifier(parent_session_id):
                 return None
             _, child = self.store.session(cid)
             child['parent'] = identifier(parent_session_id)
             previous = state['children'].get(cid)
+            if previous is not None and previous['subid'] == subid:
+                return None
+            if previous is not None:
+                for did in [did for did, dispatch in state['dispatches'].items() if cid in dispatch['children']]:
+                    state['dispatches'].pop(did, None)
             if previous is None or previous['subid'] != subid:
                 # Parent start-generation fence, NOT an exact sync receipt/child mapping.
                 # Native sync results contain no child IDs; unrelated starts also invalidate.
@@ -40,7 +45,7 @@ class Lifecycle:
             if state is None:
                 return None
             child = state['children'].get(identifier(child_session_id))
-            if child is not None and child_status in TERMINAL:
+            if child is not None and isinstance(child_status, str) and child_status in TERMINAL:
                 child['stop'] = {'status': child_status, 'summary': scrub_text(child_summary) if isinstance(child_summary, str) else None,
                                   'tool_call_history': scrub(tool_call_history) if isinstance(tool_call_history, list) else [],
                                   'duration_ms': duration_ms if type(duration_ms) is int and 0 <= duration_ms <= 86400000 else None}
@@ -87,28 +92,34 @@ class Lifecycle:
         if not self.active() and not self.active(child=True):
             return None
         with self.store.lock:
-            if self.closed:
+            if self.closed or ('key' in locals() and not self.store.current(key, state)):
                 return None
-            _, state = self.store.session(session_id)
+            key, state = self.store.session(session_id)
             if state is None:
                 return None
         rows = conversation_history if isinstance(conversation_history, list) else []
         last_user = next((r for r in reversed(rows[-128:]) if isinstance(r, dict) and r.get('role') == 'user'), {})
         # Метаданные обязаны относиться к текущему сообщению, не старой delivery row.
         typed = last_user.get('content') == user_message and last_user.get('display_kind') == 'async_delegation_complete'
-        is_notification = isinstance(user_message, str) and '[ASYNC DELEGATION' in user_message
+        is_notification = typed and isinstance(user_message, str)
         with self.store.lock:
-            if self.closed:
+            if self.closed or ('key' in locals() and not self.store.current(key, state)):
                 return None
             if identifier(parent_session_id):
                 state['parent'] = identifier(parent_session_id)
-            if state.get('turn') != identifier(turn_id):
-                state['tool_evidence'] = []
-            state['turn'] = identifier(turn_id)
-            state['task'] = identifier(task_id)
-            state['trivial'] = not meaningful(user_message) if not is_notification else False
-            if meaningful(user_message) and not is_notification:
-                state['goal'] = scrub_text(user_message, 2000)
+            if not is_notification:
+                # Bounded signature; middle-only changes beyond these samples remain unknown.
+                signature = fingerprint([len(user_message), user_message[:2000], user_message[-256:]]) if isinstance(user_message, str) else ''
+                turn, task = identifier(turn_id), identifier(task_id)
+                trivial = not meaningful(user_message)
+                if (state.get('turn') != turn or state.get('task') != task
+                        or state.get('goal_signature') != signature or state.get('trivial') != trivial):
+                    state['revision'] = state.get('revision', 0) + 1
+                    state['tool_evidence'] = []
+                    state.pop('last_final', None)
+                state.update(turn=turn, task=task, trivial=trivial, goal_signature=signature)
+                if not trivial:
+                    state['goal'] = user_message[:2000]
         if not self.active(child=True) or not typed or not isinstance(user_message, str):
             return None
         match = COMPLETE.match(user_message)
@@ -117,7 +128,7 @@ class Lifecycle:
         if not match or not did or did != match.group(1):
             return None
         with self.store.lock:
-            if self.closed:
+            if self.closed or ('key' in locals() and not self.store.current(key, state)):
                 return None
             dispatch = state['dispatches'].get(did)
             if dispatch is None or dispatch['delivered']:
@@ -130,17 +141,20 @@ class Lifecycle:
                           if meaningful(c['goal']) and (c['stop'].get('summary') or c['stop']['status'] != 'completed')]
             if not candidates:
                 return None
+            scope = self.capture_scope(session_id, state=state)
+            if scope is None:
+                return None
             dispatch['delivered'] = True
         end = self.deadline()
         summaries = []
         for cid, goal, stop in candidates:
-            review = self.cached_review(session_id, goal, stop, deadline=end, identity=cid, allow_accept=False)
+            review = self.cached_review(session_id, goal, stop, deadline=end, identity=cid, allow_accept=False, expected_scope=scope)
             summaries.append('Дочерняя сессия ' + cid + ': ' + self.review_note(review, child=True))
         context = 'PPLX: отдельные проверки завершённых дочерних результатов. Исходные статусы и свидетельства не заменены.\n' + '\n'.join(summaries)
         if len(context) > 16000:
             context = context[:15900] + '\nОграничение: контекст reviewer сокращён до локального лимита; исходные результаты сохранены.'
         with self.store.lock:
-            return None if self.closed else {'context': context}
+            return None if not self.scope_current(scope) else {'context': context}
 
     def review_note(self, review, child=False):
         marker = review['verdict']

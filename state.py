@@ -18,7 +18,7 @@ def meaningful(value):
 
 
 def fingerprint(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode('utf-8')).hexdigest()
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=True, default=str).encode('utf-8')).hexdigest()
 
 
 def bounded_put(mapping, key, value, cap=128):
@@ -62,6 +62,18 @@ class Store:
             state['time'] = now
             bounded_put(self.sessions, key, state)
             return key, state
+
+    def current(self, key, state):
+        """Identity/owner/TTL check, without creating or refreshing a state."""
+        from hermes_constants import get_hermes_home
+        from .protocol import number
+        try:
+            ttl = number(self.ttl_getter(), .02, 3600)
+        except Exception:
+            ttl = 1800
+        with self.lock:
+            return (key is not None and key[0] == str(get_hermes_home().resolve())
+                    and self.sessions.get(key) is state and self.clock() - state['time'] <= ttl)
 
     def clear(self):
         with self.lock:

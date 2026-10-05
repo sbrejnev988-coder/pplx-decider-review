@@ -63,6 +63,8 @@ def test_main_low_metric_even_strong_quality_cannot_accept(env):
         d = answer_payload(payload, completed=.5, reliable=.9, adverse=.01)
         d['answers']['overall_quality']['confidence'] = 1
         d['answers']['overall_quality']['score'] = 4
+        # A maximal score requires a coherent point-mass distribution.
+        d['answers']['overall_quality']['probabilities'] = {str(i): float(i == 4) for i in range(5)}
         return httpx.Response(200, json=d)
     env.replies.append(reply)
     text = env.ctx.hooks['transform_llm_output'](session_id='p', response_text='Компонент частично выполнен.')

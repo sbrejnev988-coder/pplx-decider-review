@@ -81,6 +81,9 @@ def test_documented_snapshot_fractional_score_and_absent_id(env):
         d = answer_payload(payload); d['model'] = MODEL + '-20261001'; d.pop('id')
         d['answers']['quality']['score'] = 3.5010741098620537
         d['answers']['quality']['confidence'] = .7505370549310268
+        score = d['answers']['quality']['score']
+        d['answers']['quality']['probabilities'] = {
+            '0': 0, '1': 0, '2': 0, '3': 4-score, '4': score-3}
         return httpx.Response(200, json=d)
     review = child_review(env, reply)
     assert review['model'] == MODEL + '-20261001'

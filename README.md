@@ -4,6 +4,16 @@ Standalone Python-плагин для **Hermes Agent**: независимая �
 
 > PPLX — оценка, не факт, не доказательство выполнения и не разрешение на инструменты. Плагин не делает автоматический `delegate_task`, HTTP retry или произвольный повтор agent loop. Консервативный RETRY возможен даже при фактически успешной задаче.
 
+## 0.1.5 после полной ревизии
+
+Версия подготовлена на основе `204d1099f34a5469e94f52d7a77c20c0283d4591` и выборочно использует проверенные идеи `pplx-decider-review-fixed.zip`. Архив не заменял tests/CI: прежние файлы сохранены. Исправлены смешение политик в кеше при ABA настроек, повтор старого verdict новой задачей, обработка evidence после deadline и fail-open для non-finite JSON. Добавлены scope/lifecycle fences, ограниченная проекция, согласованность choice/score и Unicode-safe egress.
+
+Локальная приёмка неизменённых code/test files: **216 passed / 5 skipped** с native SDK (221 cases) и **208 passed / 5 skipped** через standalone unit runner (213 cases), failures/errors — 0. Пять skips каждой suite: Windows symlink privilege error 1314. Наборы перекрываются, их нельзя суммировать. Независимый recheck non-finite исправления прошёл; live OpenRouter behavior этим не доказывается. Актуальный cross-platform результат конкретного commit — в [GitHub Actions](https://github.com/sbrejnev988-coder/pplx-decider-review/actions).
+
+Native scanner v9 оставил **CAUTION: 4 findings**: pip install через requirements с pinned прямыми зависимостями, текст о os.environ в README, Unicode test fixtures и defensive sensitive-field regex. Scanner override не выполнялся. Публикация source не означает разрешения на установку/egress и не обновляет установленные копии или процессы.
+
+Порядок работы и ограничения: [GUIDE_RU.md](GUIDE_RU.md). Предыдущий [аудит 0.1.4](docs/audit.md) сохранён как история, не как доказательство готовности 0.1.5.
+
 ## Совместимость
 
 - Reviewer: буквально `perplexity/pplx-decider-v1-27b`.
