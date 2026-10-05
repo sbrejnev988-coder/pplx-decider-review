@@ -47,7 +47,7 @@ def test_main_review_fail_open_preserves_final_adds_ru_warning_no_fake_continue(
     assert env.ctx.hooks['pre_verify'](session_id='p', final_response='Готово.', changed_paths=['C:/a.py'], attempt=0) is None
     original = 'Готово. Оригинальное заявление не переписано.'
     output = env.ctx.hooks['transform_llm_output'](session_id='p', response_text=original)
-    assert output.startswith(original) and 'не подтверждена' in output
+    assert output.startswith(original) and 'заключение PPLX отсутствует' in output
     assert not env.calls
 
 @pytest.mark.parametrize('method', ['pre_verify', 'transform_llm_output'])

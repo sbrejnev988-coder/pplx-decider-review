@@ -168,7 +168,7 @@ def test_native_scoped_reviewer_model_drives_hook(native_env, surface, scenario,
     assert rows[-1]['target_type'] == ('main' if surface == 'main' else 'subagent')
     assert rows[-1]['requested_model'] == MODEL
     assert original_final not in audit_path.read_text(encoding='utf-8')
-    assert env.manifest.version == '0.1.5'
+    assert env.manifest.version == '0.1.6'
     assert 'model' not in env.manifest.config_schema
     assert env.manifest.config_schema[MODEL_KEY]['default'] == MODEL
     for key in env.manifest.config_schema:

@@ -159,19 +159,34 @@ class Lifecycle:
     def review_note(self, review, child=False):
         marker = review['verdict']
         if not review['verified']:
-            return 'PPLX INSPECT: проверка не подтверждена; ' + ' '.join(review['errors'])
+            return ('PPLX INSPECT: оценку получить не удалось; заключение PPLX отсутствует.\n'
+                    + ' '.join(review['errors']))
         answers = review['answers']
-        goal = 'goal_completed' if child else 'task_satisfied'
-        reliability = 'result_reliable' if child else 'claims_supported'
-        note = f"PPLX {marker}: вероятность выполнения={answers[goal]['noul']:.3f}, надёжности={answers[reliability]['noul']:.3f}. "
-        risk_labels = {'important_requirement_missed': 'пропуска требования',
-                       'contradictions_present' if child else 'internal_contradiction': 'противоречия',
-                       'unsupported_success_claim' if child else 'needs_revision': 'неподтверждённого успеха' if child else 'доработки'}
-        note += 'Вероятности рисков: ' + ', '.join(f"{label}={answers[k]['noul']:.3f}" for k, label in risk_labels.items()) + '. '
+        statuses = {'RETRY': 'рекомендуется перепроверка',
+                    'INSPECT': 'нужна дополнительная проверка',
+                    'ACCEPT': 'проверяющая модель рекомендует принять результат'}
+        labels = [
+            ('goal_completed' if child else 'task_satisfied',
+             'полного выполнения подзадачи' if child else 'полного выполнения задачи'),
+            ('result_reliable' if child else 'claims_supported',
+             'надёжности результата подзадачи' if child else 'подтверждённости заявлений'),
+            ('important_requirement_missed', 'пропуска важного требования'),
+            ('contradictions_present' if child else 'internal_contradiction', 'наличия противоречий'),
+            ('unsupported_success_claim' if child else 'needs_revision',
+             'неподтверждённого заявления об успехе' if child else 'необходимости доработки'),
+        ]
+        note = f"PPLX {marker}: {statuses[marker]}.\nПо оценке PPLX, вероятность:\n"
+        for index, (key, label) in enumerate(labels):
+            value = f"{answers[key]['noul'] * 100:.1f}".replace('.', ',')
+            punctuation = '.' if index == len(labels) - 1 else ';'
+            note += f"- {label} — {value}%{punctuation}\n"
         if marker == 'RETRY':
-            note += 'Sol: исправь выявленные пробелы; повтор по этой цели допустим не более одного раза, без автоматического запуска дочернего агента.'
+            note += ('Sol: сначала сверь требования с фактическими результатами. '
+                     'Если подтвердятся недочёты, исправь их. '
+                     'Повтор по этой цели допускается не более одного раза; '
+                     'автоматически запускать субагента нельзя.')
         elif marker == 'INSPECT':
-            note += 'Sol: проверь требования и доступные свидетельства; не выдавай вероятности за факты.'
+            note += 'Sol: сверь требования с доступными свидетельствами; пока не считай результат подтверждённым.'
         else:
-            note += 'Это advisory-сигнал, а не доказательство фактической корректности.'
-        return note + ' ' + review['reason']
+            note += 'Это рекомендация проверяющей модели, а не доказательство правильности результата.'
+        return note + '\n' + review['reason']

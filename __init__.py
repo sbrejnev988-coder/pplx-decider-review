@@ -299,7 +299,10 @@ class ReviewRuntime:
                     return dict(result, verdict='INSPECT', reason='Достигнут лимит рекомендаций повтора по этой родительской цели; требуется ручная проверка.',
                                 recommendation='Sol: не повторяй автоматически; проверь свидетельства и сообщи ограничение.')
                 bounded_put(state['retries'], task, used + 1)
-            result['recommendation'] = 'Sol: исправь недостатки и при необходимости повтори выполнение по этой цели не более одного раза; автоматические инструменты и spawn отсутствуют.'
+            result['recommendation'] = ('Sol: сначала сверь требования с фактическими результатами. '
+                                        'Если подтвердятся недочёты, исправь их. '
+                                        'Повтор по этой цели допускается не более одного раза; '
+                                        'автоматически запускать субагента нельзя.')
         return result
 
     def transform_tool_result(self, tool_name='', args=None, result=None, session_id='', **kwargs):

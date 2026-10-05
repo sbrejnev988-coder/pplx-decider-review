@@ -1,6 +1,6 @@
 manifest_version: 2
 name: pplx-decider-review
-version: "0.1.5"
+version: "0.1.6"
 kind: standalone
 description: "Ограниченный вероятностный PPLX reviewer через OpenRouter Decisions; без автоматических инструментов."
 optional_env:

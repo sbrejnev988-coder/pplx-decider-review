@@ -113,6 +113,6 @@ class MainReview:
         review = self.final_review(session_id, state, response_text, expected_scope=scope)
         note = self.review_note(review)
         if not review['verified'] or review['verdict'] != 'ACCEPT':
-            note += '\nОграничение: общий final-transform не возобновляет агентный цикл; фактическая проверка/доработка не выполнена этим плагином.'
+            note += '\nОграничение: эта заметка не запускает новый цикл работы. Фактическую проверку и исправления плагин не выполняет.'
         with self.store.lock:
             return None if not self.scope_current(scope) else response_text + '\n\n---\n' + note

@@ -13,7 +13,7 @@ def test_main_adverse_probability_is_explained_in_russian_not_fact_claim(env):
     env.replies.append(reply)
     result = env.ctx.hooks['pre_verify'](session_id='p', final_response='Готово; проверка противоречива.', changed_paths=['C:/a'], attempt=0)
     assert result['action'] == 'continue'
-    assert 'противоречия=0.900' in result['message']
+    assert 'наличия противоречий — 90,0%' in result['message']
     assert 'вероятность' in result['message']
 
 
