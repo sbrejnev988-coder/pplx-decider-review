@@ -112,6 +112,9 @@ class Lifecycle:
                 signature = fingerprint([len(user_message), user_message[:2000], user_message[-256:]]) if isinstance(user_message, str) else ''
                 turn, task = identifier(turn_id), identifier(task_id)
                 trivial = not meaningful(user_message)
+                if state.get('turn') != turn:
+                    # Reset only main-turn admission, not the existing child-goal retry cap.
+                    state.pop('main_review_once', None)
                 if (state.get('turn') != turn or state.get('task') != task
                         or state.get('goal_signature') != signature or state.get('trivial') != trivial):
                     state['revision'] = state.get('revision', 0) + 1
@@ -156,7 +159,7 @@ class Lifecycle:
         with self.store.lock:
             return None if not self.scope_current(scope) else {'context': context}
 
-    def review_note(self, review, child=False):
+    def review_note(self, review, child=False, guidance=True):
         marker = review['verdict']
         if not review['verified']:
             return ('PPLX INSPECT: оценку получить не удалось; заключение PPLX отсутствует.\n'
@@ -180,12 +183,12 @@ class Lifecycle:
             value = f"{answers[key]['noul'] * 100:.1f}".replace('.', ',')
             punctuation = '.' if index == len(labels) - 1 else ';'
             note += f"- {label} — {value}%{punctuation}\n"
-        if marker == 'RETRY':
+        if guidance and marker == 'RETRY':
             note += ('Sol: сначала сверь требования с фактическими результатами. '
                      'Если подтвердятся недочёты, исправь их. '
                      'Повтор по этой цели допускается не более одного раза; '
                      'автоматически запускать субагента нельзя.')
-        elif marker == 'INSPECT':
+        elif guidance and marker == 'INSPECT':
             note += 'Sol: сверь требования с доступными свидетельствами; пока не считай результат подтверждённым.'
         else:
             note += 'Это рекомендация проверяющей модели, а не доказательство правильности результата.'

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class PolicySnapshot:
     tag: str
+    mode: str
     valid: bool
     enabled: bool
     main_enabled: bool
@@ -81,7 +82,7 @@ class ReviewRuntime:
     def setting(self, name, default):
         return self.ctx.get_config(name, default)
 
-    def review(self, goal, evidence, main=False, deadline=None, policy=None, expected_scope=None):
+    def review(self, goal, evidence, main=False, deadline=None, policy=None, expected_scope=None, main_reservation=None):
         from .protocol import unavailable, number
         from .transport import request_once
         with self.store.lock:
@@ -118,6 +119,8 @@ class ReviewRuntime:
                 with self.store.lock:
                     admitted = (not self.closed and self.generation == generation and self.config_tag() == policy.tag
                                 and (expected_scope is None or self.scope_current(expected_scope)))
+                    if admitted and main and expected_scope is not None and policy.mode == 'bounded':
+                        admitted = self.admit_main_request(expected_scope, main_reservation)
                 if not admitted:
                     result.append(unavailable('Изменилась сессия, задача либо конфигурация reviewer.'))
                     return
@@ -188,7 +191,7 @@ class ReviewRuntime:
             budget, timeout, accept, retry = 25, 10, .8, .65
         ttl = values['cache_ttl_seconds']
         ttl = ttl if type(ttl) in (int, float) and .02 <= ttl <= 1800 else 300
-        return PolicySnapshot(tag, valid, values['enabled'] is True, values['review_main_agent'] is True,
+        return PolicySnapshot(tag, values['mode'], valid, values['enabled'] is True, values['review_main_agent'] is True,
                               values['review_subagents'] is True, budget, timeout, accept, retry,
                               values['max_review_retries'] if valid else 0, ttl)
 
@@ -221,7 +224,7 @@ class ReviewRuntime:
                     and state.get('task', '') == task and state.get('sync_generation', 0) == start_generation
                     and self.config_tag() == policy.tag)
 
-    def cached_review(self, session_id, goal, evidence, main=False, deadline=None, identity='', allow_accept=True, expected_scope=None):
+    def cached_review(self, session_id, goal, evidence, main=False, deadline=None, identity='', allow_accept=True, expected_scope=None, main_reservation=None):
         from .state import fingerprint, bounded_put
         from .protocol import unavailable
         entered_at = time.monotonic()
@@ -265,9 +268,10 @@ class ReviewRuntime:
                 state['cache'].pop(digest, None)
                 hit = None
             if hit is not None:
-                return self.limit_recommendation(state, goal, json.loads(json.dumps(hit['review'])), policy)
+                return self.limit_recommendation(state, goal, json.loads(json.dumps(hit['review'])), policy,
+                                                 main_turn=scope[3] if main else None)
         started = time.monotonic()
-        result = self.review(goal, evidence, main, end, policy=policy, expected_scope=scope)
+        result = self.review(goal, evidence, main, end, policy=policy, expected_scope=scope, main_reservation=main_reservation)
         latency_ms = round((time.monotonic() - started) * 1000)
         if not allow_accept and result['verified'] and result['verdict'] == 'ACCEPT':
             result = dict(result, verdict='INSPECT', reason='Асинхронное событие не подтверждает признаки полноты результата; требуется самостоятельная проверка.')
@@ -277,7 +281,8 @@ class ReviewRuntime:
             if time.monotonic() >= end or not self.scope_current(scope):
                 return unavailable('Плагин выгружен; поздний ответ не применяется.')
             bounded_put(state['cache'], digest, {'time': self.store.clock(), 'review': result})
-            result = self.limit_recommendation(state, goal, json.loads(json.dumps(result)), policy)
+            result = self.limit_recommendation(state, goal, json.loads(json.dumps(result)), policy,
+                                               main_turn=scope[3] if main else None)
             # close() waits for an admitted audit write; none can begin after it returns.
             if self.setting('log_enabled', True) is True:
                 try:
@@ -287,10 +292,11 @@ class ReviewRuntime:
                     pass  # Best-effort audit never exposes raw exceptions or replaces native output.
             return result if self.scope_current(scope) else unavailable('Изменилась сессия, задача либо конфигурация reviewer.')
 
-    def limit_recommendation(self, state, goal, result, policy=None):
+    def limit_recommendation(self, state, goal, result, policy=None, main_turn=None):
         from .state import fingerprint, bounded_put
         if result['verdict'] == 'RETRY':
-            task = fingerprint(goal[:2000])
+            # Main cap is per native turn; child recommendations retain their goal cap.
+            task = fingerprint(goal[:2000] if main_turn is None else ['main', main_turn, goal[:2000]])
             limit = policy.retry_limit if policy is not None else self.snapshot_policy().retry_limit
             limit = limit if type(limit) is int and 0 <= limit <= 1 else 0
             with self.store.lock:

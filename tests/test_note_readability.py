@@ -34,9 +34,8 @@ def test_retry_note_explains_probabilities_without_claiming_proven_defects(env):
             '- необходимости доработки — 76,1%.',
         ):
             assert line in note
-        assert 'Если подтвердятся недочёты, исправь их.' in note
-        assert 'не более одного раза' in note
-        assert 'автоматически запускать субагента нельзя' in note
+        assert 'Sol:' not in note
+        assert 'Это рекомендация проверяющей модели, а не доказательство правильности результата.' in note
         assert 'Вероятностная оценка не заменяет фактическую проверку' in note
         assert 'Ограничение: эта заметка не запускает новый цикл работы.' in note
         assert 'Фактическую проверку и исправления плагин не выполняет.' in note

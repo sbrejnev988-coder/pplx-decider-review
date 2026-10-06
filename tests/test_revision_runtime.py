@@ -68,12 +68,31 @@ def test_disabled_target_refuses_secret_and_cache(publication_env, monkeypatch, 
         reads.append(1)
         return original(*args, **kwargs)
     monkeypatch.setattr(scope, 'get_secret', observed)
-    assert runtime.cached_review('p', GOAL, EVIDENCE, main=main)['verified']
-    before = len(reads)
+    if main:
+        unreserved = runtime.cached_review('p', GOAL, EVIDENCE, main=True)
+        assert unreserved['verified'] is False and unreserved['verdict'] == 'INSPECT'
+        assert not publication_env.calls, 'A direct main cache call has no admission reservation'
+        runtime.pre_llm_call(session_id='p', task_id='disabled-main', turn_id='enabled-turn', user_message=GOAL)
+        state = runtime.main_state('p')
+        healthy = runtime.final_review('p', state, EVIDENCE['summary'])
+    else:
+        healthy = runtime.cached_review('p', GOAL, EVIDENCE)
+    assert healthy['verified'] and healthy['verdict'] == 'ACCEPT'
+    assert len(publication_env.calls) == 1 and reads, 'Positive control must reach scoped key and HTTP'
+    before, before_calls = len(reads), len(publication_env.calls)
     runtime.ctx.set_config('review_main_agent' if main else 'review_subagents', False)
-    assert not runtime.review(GOAL, EVIDENCE, main=main)['verified']
-    assert not runtime.cached_review('p', GOAL, EVIDENCE, main=main)['verified']
+    direct = runtime.review(GOAL, EVIDENCE, main=main)
+    cached = runtime.cached_review('p', GOAL, EVIDENCE, main=main)
+    for rejected in (direct, cached):
+        assert rejected['verified'] is False and rejected['verdict'] == 'INSPECT'
+        assert rejected['model'] is None
+    if main:
+        rejected = runtime.final_review('p', state, EVIDENCE['summary'])
+        assert rejected['verified'] is False and rejected['verdict'] == 'INSPECT'
+        assert runtime.pre_verify(session_id='p', final_response=EVIDENCE['summary'], changed_paths=['synthetic.py']) is None
+        assert runtime.transform_llm_output(session_id='p', response_text=EVIDENCE['summary']) is None
     assert len(reads) == before
+    assert len(publication_env.calls) == before_calls, 'Disabled target must reject before scoped key and HTTP'
 
 
 @pytest.mark.parametrize('surface', ['cache', 'main', 'nudge', 'sync', 'async', 'ttl'])

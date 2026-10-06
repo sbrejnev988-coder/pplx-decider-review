@@ -57,15 +57,26 @@ def test_main_cache_fenced_by_recorded_turn_without_retry_reset(publication_env)
     assert len(runtime.main_state('p')['cache']) == 2
     def adverse(request):
         payload = json.loads(request.content)
+        env.calls.append((request, payload))
         return httpx.Response(200, json=answer_payload(payload, completed=.4, reliable=.5, adverse=.7))
     runtime.transport = httpx.MockTransport(adverse)
     begin('t3')
     _, state = runtime.store.session('p')
     a = runtime.final_review('p', state, 'Готово без тестов.')
-    assert a['verdict'] == 'RETRY'
+    assert a['verdict'] == 'RETRY' and len(env.calls) == 3
+    assert runtime.final_review('p', state, 'Готово без тестов.') == a
+    assert len(env.calls) == 3, 'Повтор финала не пополняет бюджет одного native turn'
+    child = runtime.cached_review('p', GOAL, {'summary': SUMMARY})
+    assert child['verdict'] == 'RETRY' and len(state['retries']) == 2
+    assert len(env.calls) == 4
     begin('t4')
     b = runtime.final_review('p', state, 'Готово без тестов.')
-    assert b['verdict'] == 'INSPECT' and len(state['retries']) == 1
+    assert b['verdict'] == 'RETRY' and len(env.calls) == 5 and len(state['retries']) == 3
+    assert runtime.final_review('p', state, 'Готово без тестов.') == b
+    assert len(env.calls) == 5, 'Новый turn допускает ровно один новый main review'
+    child_again = runtime.cached_review('p', GOAL, {'summary': SUMMARY})
+    assert child_again['verdict'] == 'INSPECT' and len(state['retries']) == 3
+    assert len(env.calls) == 6, 'Main turn reset не сбрасывает прежний goal-cap дочерних рекомендаций'
 
 
 class HTTPBomb(httpx.SyncByteStream):

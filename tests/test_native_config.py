@@ -132,7 +132,9 @@ def test_native_scoped_reviewer_model_drives_hook(native_env, surface, scenario,
         def invoke():
             output = env.manager._hooks['transform_llm_output'][0](session_id=session_id, response_text=original_final)
             assert output.startswith(original_final + '\n\n---\n'), 'Исходный main final изменён'
-            return env.runtime.main_state(session_id)['last_final']['review'], output
+            state = env.runtime.main_state(session_id)
+            scope = env.runtime.capture_scope(session_id, state=state)
+            return env.runtime.main_receipt(scope, state.get('main_review_once')), output
     else:
         def invoke():
             output = env.manager._hooks['transform_tool_result'][0](tool_name='delegate_task', session_id=session_id,
@@ -153,6 +155,8 @@ def test_native_scoped_reviewer_model_drives_hook(native_env, surface, scenario,
         assert env.redactions and env.calls[0]['model'] == MODEL
         assert len(review['answers']) == 7
         if scenario == 'cache_change':
+            initial_review = review
+            audit_before = (env.home / 'plugin-data/pplx-decider-review/reviews.jsonl').read_bytes()
             before = env.runtime.config_tag()
             # Реальная public scoped запись; не monkeypatch reader и не full/global read.
             env.ctx.set_config(MODEL_KEY, UNSUPPORTED_MODEL)
@@ -160,15 +164,20 @@ def test_native_scoped_reviewer_model_drives_hook(native_env, surface, scenario,
             assert env.runtime.config_tag() != before
             review, output = invoke()
             assert review['verified'] is False and review['verdict'] == 'INSPECT'
+            if surface == 'main':
+                assert 'PPLX INSPECT' in output and 'PPLX ACCEPT' not in output
+                assert (env.home / 'plugin-data/pplx-decider-review/reviews.jsonl').read_bytes() == audit_before
+                assert env.runtime.main_state(session_id)['last_final']['review'] == initial_review
             assert env.secret_reads == ['OPENROUTER_API_KEY'] and len(env.calls) == 1, 'Отказ должен предшествовать scoped key/transport и не использовать старый ACCEPT cache'
     audit_path = env.home / 'plugin-data/pplx-decider-review/reviews.jsonl'
     rows = [json.loads(line) for line in audit_path.read_text(encoding='utf-8').splitlines()]
-    assert rows[-1]['policy_decision'] == review['verdict']
-    assert rows[-1]['verified'] is review['verified']
+    audited_review = initial_review if scenario == 'cache_change' and surface == 'main' else review
+    assert rows[-1]['policy_decision'] == audited_review['verdict']
+    assert rows[-1]['verified'] is audited_review['verified']
     assert rows[-1]['target_type'] == ('main' if surface == 'main' else 'subagent')
     assert rows[-1]['requested_model'] == MODEL
     assert original_final not in audit_path.read_text(encoding='utf-8')
-    assert env.manifest.version == '0.1.6'
+    assert env.manifest.version == '0.1.8'
     assert 'model' not in env.manifest.config_schema
     assert env.manifest.config_schema[MODEL_KEY]['default'] == MODEL
     for key in env.manifest.config_schema:

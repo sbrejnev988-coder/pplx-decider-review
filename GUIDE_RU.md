@@ -1,6 +1,24 @@
-# PPLX Decider Review — 0.1.6
+# PPLX Decider Review — 0.1.8
 
-## Изменение текста в 0.1.6
+## Стабильная заметка и границы оценки
+
+В режиме `bounded` повтор одинакового fallback-финала сохраняет исходную final-scoped заметку без нового main-review HTTP. Оценка из `pre_verify`, другой кандидат или native статус `requested/completed` по-прежнему помечаются как **исходный черновик (DRAFT)**. Это не подтверждение исправленного финала. Потеря receipt при TTL/goal/config fence не пополняет main-бюджет; один новый main-запрос возможен только в новом native turn. `Advisory` и child review имеют отдельные правила.
+
+Для локальной привязки используется полный исходный текст, а не его обрезанная или redacted копия. Digest не отправляется reviewer и не записывается в audit. Даже изменение только хвоста ответа или скрываемого фрагмента не переносит прежнюю оценку на новый финал. Если tool evidence меняется после проверки кандидата, последний application fence под общей блокировкой оставляет исходный ответ без устаревшей заметки; повторного HTTP нет. Внешняя оценка всё ещё ограничена отфильтрованным excerpt, а не всем текстом.
+
+Regression controls сохраняют положительные и отрицательные случаи: допустимый reservation перед main review, отказ повторного HTTP в том же turn, новый turn, отключение ветви до чтения ключа и сохранение отдельного goal-cap дочерних рекомендаций. Portable suite и native SDK config suite перекрываются; отдельные native integration/unittest cases не собираются portable pytest. Локальные проверки используют synthetic home и контролируемый транспорт, а не live Sol/PPLX. Source-публикация не обновляет установленные файлы и не подтверждает загрузку работающим процессом.
+
+## История 0.1.7: одноразовая проверка до финала
+
+Для `bounded` и meaningful main-goal проверенный RETRY/INSPECT вызывает один native user-nudge Sol. Sol самостоятельно проверяет факты, исправляет подтверждённые недочёты либо сообщает о неподтвердившихся замечаниях. PPLX не является источником истины или разрешением на действия. ACCEPT/API error/child/disabled/advisory не принуждают продолжение.
+
+Legacy: без строгого native `all_finals=True` нужны tracked paths и integer `attempt=0`. Для разрешённых plain-text ответов требуется separately reviewed core с `agent.pre_verify_all_finals: true`; одного обновления плагина недостаточно. Core сохраняет `max_verify=0`, ограничивает feedback одним реальным ходом и запрещает spawn `delegate_task` на correction pass. Hooks по-прежнему шесть.
+
+Main reservation создаётся атомарно до HTTP по owner/session/native-turn. Отдельный ограниченный JSON receipt не разделяет mutable review с cache или caller. После pass final-transform сохраняет модельный текст, не вызывает второй PPLX, а оценку явно помечает как **исходный черновик (DRAFT)**. Cache miss/TTL/config/goal fence не разрешает повторный запрос. Native `verification_pass_status=requested` означает запрос, не завершение; `completed` принимается только из native metadata. Без metadata статус неизвестен. Финальная заметка не содержит имитации нового ответа `Sol:`.
+
+Историческая source-подготовка 0.1.7 и её focused SDK controls не являются приёмкой текущей 0.1.8. Первый streaming draft может показываться как interim. Публикация, установка и загрузка live-процессом проверяются отдельно; MockTransport не доказывает успешный ответ реального Sol/PPLX. Transport, секреты, redaction, thresholds/timeouts и SDK namespace policy сохраняются.
+
+## История: изменение текста в 0.1.6
 
 Заметки показывают вероятности понятными процентами и не объявляют ошибки установленными только по оценке PPLX. RETRY означает рекомендацию перепроверить результат; исправлять следует только подтверждённые недочёты. Отсутствие ответа reviewer описывается как отсутствие заключения PPLX, а не как отсутствие фактических проверок. Автоматического запуска субагента или универсального продолжения агентного цикла нет. Числовая политика и внешние маршруты не менялись.
 
@@ -60,6 +78,7 @@ Default unit и explicit native config tests — разные уровни до�
 
 - Policy snapshot устраняет доказанное смешение digest/thresholds, но отсутствие atomic native revision не позволяет заявлять обнаружение **всех** не наблюдавшихся переходных ABA настроек.
 - Deadline кооперативный: blocking network phase/DNS/OS I/O может жить дольше срока. Worker не убивается; слот удерживается до natural completion.
+- Полная локальная identity читает весь ответ линейно кусками по 4096 символов. Ограниченный временный буфер не означает hard CPU/wall-clock containment.
 - Sync generation не exact receipt→child mapping; arbitrary late stop нельзя привязать к исполнению, если native producer не несёт identity. Ambiguous event не доказательство успеха.
 - Native redaction не гарантирует распознавания любого свободнотекстового секрета. Egress требует самостоятельного решения владельца.
 - TTL/eviction/restart и ограниченный cache — не durable spending/retry ledger. Вероятности PPLX не facts и не tool permission.

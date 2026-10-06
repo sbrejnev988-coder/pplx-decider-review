@@ -14,8 +14,16 @@ def log_path(home):
 @pytest.mark.parametrize('scenario', ['default'])
 def test_unavailable_log_does_not_invent_actual_model(publication_env):
     env = publication_env
-    env.runtime.transport = httpx.MockTransport(lambda request: httpx.Response(503))
-    env.runtime.cached_review('metadata-owner', 'Проверить отказ', {'summary': 'Синтетический результат'}, main=True)
+    runtime, calls = env.runtime, []
+    def failed(request):
+        calls.append(503)
+        return httpx.Response(503)
+    runtime.transport = httpx.MockTransport(failed)
+    runtime.pre_llm_call(session_id='metadata-owner', task_id='metadata-A', turn_id='metadata-turn-1',
+                         user_message='Проверить отказ')
+    failed_review = runtime.final_review('metadata-owner', runtime.main_state('metadata-owner'), 'Синтетический результат')
+    assert failed_review['verified'] is False and failed_review['verdict'] == 'INSPECT'
+    assert any('HTTP 503' in error for error in failed_review['errors']) and calls == [503]
     row = json.loads(log_path(env.home).read_text(encoding='utf-8'))
     assert row['model'] is None
     assert row['requested_model'] == MODEL
@@ -23,12 +31,27 @@ def test_unavailable_log_does_not_invent_actual_model(publication_env):
 
     snapshot = MODEL + '-20261001'
     def reply(request):
+        calls.append(200)
         payload = answer_payload(json.loads(request.content))
         payload['model'] = snapshot
         return httpx.Response(200, json=payload)
-    env.runtime.transport = httpx.MockTransport(reply)
-    env.runtime.cached_review('metadata-owner', 'Проверить snapshot', {'summary': 'Другой результат'}, main=True)
-    row = json.loads(log_path(env.home).read_text(encoding='utf-8').splitlines()[-1])
+    runtime.transport = httpx.MockTransport(reply)
+    before = log_path(env.home).read_bytes()
+    runtime.pre_llm_call(session_id='metadata-owner', task_id='metadata-B', turn_id='metadata-turn-1',
+                         user_message='Проверить snapshot')
+    blocked = runtime.final_review('metadata-owner', runtime.main_state('metadata-owner'), 'Другой результат')
+    assert blocked['verified'] is False and blocked['verdict'] == 'INSPECT'
+    assert blocked['model'] is None and blocked['requested_model'] == MODEL
+    assert calls == [503] and log_path(env.home).read_bytes() == before
+
+    # Only a fresh native turn admits the snapshot-positive request after the failed HTTP.
+    runtime.pre_llm_call(session_id='metadata-owner', task_id='metadata-B', turn_id='metadata-turn-2',
+                         user_message='Проверить snapshot')
+    fresh = runtime.final_review('metadata-owner', runtime.main_state('metadata-owner'), 'Другой результат')
+    assert fresh['verified'] is True and fresh['verdict'] == 'ACCEPT' and calls == [503, 200]
+    rows = log_path(env.home).read_text(encoding='utf-8').splitlines()
+    assert len(rows) == 2
+    row = json.loads(rows[-1])
     assert row['model'] == snapshot and row['requested_model'] == MODEL and row['verified'] is True
 
 

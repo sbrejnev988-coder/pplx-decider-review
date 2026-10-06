@@ -4,7 +4,29 @@ Standalone Python-плагин для **Hermes Agent**: независимая �
 
 > PPLX — оценка, не факт, не доказательство выполнения и не разрешение на инструменты. Плагин не делает автоматический `delegate_task`, HTTP retry или произвольный повтор agent loop. Консервативный RETRY возможен даже при фактически успешной задаче.
 
-## 0.1.6: понятные сообщения reviewer
+## 0.1.8: стабильная заметка и корректные regression controls
+
+В режиме `bounded` повторная обработка того же fallback-финала сохраняет его первоначальную заметку и не превращает её в оценку черновика. Если оценка получена в `pre_verify`, изменился кандидат или native core сообщает `requested/completed`, заметка по-прежнему относится к **исходному DRAFT**, а не подтверждает исправленный финал. Повторного main-review HTTP в этом native turn нет; это ограничение не переносится на `advisory` или child review.
+
+Identity кандидата учитывает весь исходный ответ, в том числе хвост после лимита egress и различия в редактируемых фрагментах. Raw text и локальный digest не добавляются в запрос или журнал. Перед применением final-scoped заметки tool evidence повторно сверяется под общей блокировкой; при позднем изменении сохраняется исходный ответ без устаревшей заметки и без дополнительного HTTP. Это не доказывает полноту внешней оценки: reviewer по-прежнему получает только ограниченную redacted projection.
+
+Regression controls разделяют TTL актуальности receipt и бюджет запроса: истечение TTL, смена task/goal или отказ HTTP не пополняют main-слот. Новый настоящий turn допускает новый main review; прежний goal-cap дочерних рекомендаций сохраняется. Проверки model metadata и отключённой ветви выполняются через допустимый reservation с положительными и отрицательными controls.
+
+Это исходники плагина, не автоматическое обновление установленных копий. Изменения core, настройка `agent.pre_verify_all_finals`, разрешение egress и загрузка работающим Desktop/gateway остаются отдельными операциями. Native controls требуют совместимого SDK; portable CI не является live Sol/PPLX proof. Результат конкретного commit — в GitHub Actions.
+
+## История: 0.1.7, один проход Sol до финала
+
+В режиме `bounded` native `pre_verify` передаёт проверенный RETRY/INSPECT основному агенту как настоящий `action=continue` с русским user-nudge. Sol должен самостоятельно сверить факты и требования, исправить подтверждённые ошибки либо явно сообщить, что замечание не подтвердилось. ACCEPT, ошибка API, отключённая ветвь, child и `advisory` не требуют продолжения.
+
+Без native opt-in остаётся прежнее условие: `attempt` — integer 0 и есть tracked path. Для разрешённых ответов без edits нужен **reviewed core с `agent.pre_verify_all_finals: true` (строгий bool)**, передающий `all_finals=True`. Плагин не включает этот глобальный режим сам. Core обязан ограничить feedback одним проходом на реальный пользовательский ход, сохранить `max_verify=0` и блокировать новый `delegate_task` во время прохода; седьмой plugin hook не добавлен.
+
+Слот owner/session/native-turn атомарно резервируется до review. После него final-transform сохраняет текст модели и использует отдельный ограниченный receipt **исходного черновика (DRAFT)**, даже если final изменился или cache очищен. Повторного автоматического PPLX-запроса нет. Истёкший или не совпадающий scope receipt не применяется; native `requested/completed` также запрещает новый запрос при утрате receipt. `verification_pass_status=completed` показывается только по native metadata, `requested` не означает завершения; без metadata — `unknown`. Оценка DRAFT не выдаётся за PPLX-подтверждение исправленного final. Псевдоответ `Sol:` к финалу не дописывается.
+
+Пороги, transport/model/endpoint, секреты, redaction, таймауты и namespace guard неизменны. Новый пользовательский native ход сбрасывает только main-слот; прежний goal-cap дочерних рекомендаций сохранён. Первый streaming candidate может уже быть виден как interim: проверка до первого отображения не обещается.
+
+Это описание source-контракта: публикация исходников не доказывает установку, scanner consent, успешный интегрированный core loop либо активацию профилей. Focused native SDK/dispatcher regressions — `tests/native_onepass_unittest.py`; они запускаются отдельным stdlib runner в plugin lane, а не автоматически portable pytest без SDK. Fixtures используют только настоящий PluginContext/validator/home/secret scope и контролируемые MockTransport Decisions, не реальный Sol/PPLX API.
+
+## История: 0.1.6, понятные сообщения reviewer
 
 Русские заметки PPLX теперь выводятся отдельными пунктами с процентами. Они явно отделяют оценку модели от доказанных фактов: рекомендация RETRY сначала требует сверки требований и реальных результатов, а исправления — только при подтверждённых недочётах. При недоступности reviewer сообщается «заключение PPLX отсутствует», а не утверждается, что фактическая проверка результата не состоялась.
 
@@ -75,7 +97,7 @@ hermes -p PROFILE plugins enable pplx-decider-review --no-allow-tool-override
 Запрос — пять атомарных noul, next_action типа choice, русская пятиуровневая score-рубрика. Ответ требует всех вопросов, корректных типов, конечных чисел и полных распределений. Score может быть дробным; погрешность суммы вероятностей — 0.001. Actual model совпадает буквально или имеет ровно suffix -YYYYMMDD.
 
 - **ACCEPT:** выполнение/надёжность ≥0.8, adverse-сигналы <0.35; choice/confidence/quality также допускают принятие.
-- **RETRY:** выполнение/надёжность <0.65 либо adverse-сигнал ≥0.65; это рекомендация Sol, не действие. Максимум одна рекомендация по parent session/goal в удерживаемом TTL state.
+- **RETRY:** выполнение/надёжность <0.65 либо adverse-сигнал ≥0.65; это оценка для Sol, не разрешение на действия. Child-cap — одна рекомендация по parent session/goal; main-cap — один native-turn в удерживаемом TTL state.
 - **INSPECT:** неоднозначность, неполнота, недоступный reviewer или исчерпанный бюджет.
 
 Choice не отменяет противоречащие основные метрики: next_action=принять вместе с RETRY допустим. **verified=true — валидный transport/typed contract, не истинность ответа.** Неизвестный actual model/ID не выдумывается. Usage/optional provider metadata проверяются; произвольные поля не копируются.
@@ -86,11 +108,13 @@ Choice не отменяет противоречащие основные ме�
 
 Async требует настоящих start/stop, recorded dispatch, owner/parent match и актуальной typed delivery row с anchored COMPLETE-маркером. Текстового маркера недостаточно. Restart/TTL/eviction или отсутствие typed provenance могут исключить review. Native stop не даёт всех flags полноты: async ACCEPT понижается до INSPECT.
 
-Bounded допускает один native pre_verify action=continue при nonempty tracked edits и attempt 0; advisory не даёт nudge. Общий final-transform сохраняет final, но **не возобновляет произвольный agent loop**. Terminal/child writes могут не попасть в parent tracker; плагин сам не запускает тесты.
+Bounded допускает один native `pre_verify action=continue` при integer `attempt=0` и tracked path либо строгом native `all_finals=True`; advisory не даёт nudge. Final-transform сохраняет final, но **не возобновляет agent loop** и после pre-verify не повторяет PPLX. Terminal/child writes могут не попасть в parent tracker; плагин сам не запускает тесты.
 
 ## Ресурсы и журнал
 
 State — до 128 sessions и 128 records каждого типа на session; процессное TTL-состояние, не durable retry ledger. Egress — до 20000 UTF-8 bytes после native redaction. На runtime один HTTP worker/request in-flight; caller timeout не освобождает слот раньше natural worker completion.
+
+Полная локальная identity хеширует ответ кусками по 4096 символов: временный буфер ограничен, но весь текст читается линейно. Это не hard CPU/wall-clock ограничение.
 
 Transport не следует redirects, не наследует proxy env, ограничивает ответ 128 КиБ. Streaming deadline не означает мгновенное прерывание блокирующей network phase, DNS или OS I/O. Unload запрещает применение позднего результата; работающий worker не убивается. Compressed-response policy и timing boundary — в [аудите](docs/audit.md).
 

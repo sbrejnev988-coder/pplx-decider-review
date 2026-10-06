@@ -37,12 +37,32 @@ def test_main_same_text_new_turn_changed_files_does_not_reuse_old_review(env):
     assert env.calls[-1][1]['state']['evidence']['changed_paths'] == ['C:/b.py']
 
 
-def test_cached_final_expires_independent_of_active_session(env):
-    start(env); begin(env); env.ctx.settings['cache_ttl_seconds'] = .03
+def test_cached_final_expires_independent_of_active_session(env, monkeypatch):
+    runtime = start(env)
+    env.ctx.settings.update(cache_ttl_seconds=.03, callback_budget_seconds=2, timeout_seconds=1)
+    now = [time.monotonic()]
+    monkeypatch.setattr(runtime.store, 'clock', lambda: now[0])
+    begin(env)
     hook = env.ctx.hooks['transform_llm_output']
-    hook(session_id='p', response_text='Компонент готов; тесты прошли.')
-    time.sleep(.05)
-    hook(session_id='p', response_text='Компонент готов; тесты прошли.')
+    original = 'Компонент готов; тесты прошли.'
+    first = hook(session_id='p', response_text=original)
+    assert first.startswith(original) and 'PPLX ACCEPT' in first
+    assert 'PPLX ACCEPT' in hook(session_id='p', response_text=original)
+    assert len(env.calls) == 1
+    state = runtime.main_state('p')
+
+    # Receipt TTL expires even while this session stays active; it is not an HTTP refill.
+    now[0] += .05
+    begin(env)
+    assert runtime.main_state('p') is state
+    expired = hook(session_id='p', response_text=original)
+    assert expired.startswith(original) and 'PPLX INSPECT' in expired
+    assert 'PPLX ACCEPT' not in expired and len(env.calls) == 1
+
+    env.ctx.hooks['pre_llm_call'](session_id='p', task_id='task-main', turn_id='ttl-next-turn',
+                                user_message='Реализовать компонент и проверить тестами')
+    fresh = hook(session_id='p', response_text=original)
+    assert fresh.startswith(original) and 'PPLX ACCEPT' in fresh
     assert len(env.calls) == 2
 
 

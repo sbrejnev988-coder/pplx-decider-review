@@ -26,12 +26,23 @@ def test_new_task_same_goal_and_turn_has_distinct_cache_namespace(publication_en
             return runtime.final_review('p', runtime.main_state('p'), 'Компонент проверен.')
         raw = json.dumps({'results': [{'status': 'completed', 'summary': 'Компонент проверен.', 'task_index': 0}]})
         result = runtime.transform_tool_result(tool_name='delegate_task', session_id='p', args={'tasks': [{'goal': goal}]}, result=raw)
-        return json.loads(result)['pplx_review'][0]
+        data = json.loads(result)
+        assert data['results'] == json.loads(raw)['results'], 'Child evidence must remain unchanged'
+        return data['pplx_review'][0]
     runtime.pre_llm_call(session_id='p', task_id='task-A', turn_id='same-turn', user_message=goal)
     assert invoke()['verdict'] == 'ACCEPT'
     assert invoke()['verdict'] == 'ACCEPT'
     assert len(calls) == 1, 'Same-task replay remains a cache hit'
     runtime.pre_llm_call(session_id='p', task_id='task-B', turn_id='same-turn', user_message=goal)
     fresh = invoke()
-    assert len(calls) == 2, 'New task identity must trigger its own review'
+    if surface == 'main':
+        assert fresh['verified'] is False and fresh['verdict'] == 'INSPECT', 'New task cannot reuse old ACCEPT'
+        assert len(calls) == 1, 'Task revision must not refill the native-turn HTTP slot'
+        replay = invoke()
+        assert replay['verified'] is False and replay['verdict'] == 'INSPECT'
+        assert len(calls) == 1
+        runtime.pre_llm_call(session_id='p', task_id='task-B', turn_id='next-turn', user_message=goal)
+        fresh = invoke()
+    # Main requires a new turn; sync children retain their distinct task namespace in the same turn.
+    assert len(calls) == 2, 'Only the permitted scope must trigger its own review'
     assert fresh['verified'] and fresh['verdict'] == 'RETRY'
