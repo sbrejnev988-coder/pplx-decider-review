@@ -9,7 +9,7 @@ from conftest import start, answer_payload
 from test_policy import child_review
 
 @pytest.mark.parametrize('field,value', [('endpoint', 'https://evil.example/decisions'), ('endpoint', 'https://openrouter.ai/api/alpha/decisions/'),
-                                        ('provider', 'perplexity'), ('reviewer_model', 'typesafe/jev-1.13')])
+                                        ('provider', 'perplexity'), ('reviewer_model', 'synthetic-invalid-reviewer')])
 def test_altered_route_refused_before_key_resolution(env, field, value):
     env.ctx.settings[field] = value
     review = child_review(env)

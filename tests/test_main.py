@@ -21,7 +21,7 @@ def test_main_preverify_real_edits_one_continue_with_ru_probability_context(env)
     start(env); begin(env); env.replies.append(adverse_reply)
     result = env.ctx.hooks['pre_verify'](session_id='p', final_response='Компонент готов; тесты не запускались.', changed_paths=['C:/synthetic/a.py'], attempt=0)
     assert result['action'] == 'continue'
-    assert 'Sol' in result['message'] and 'вероятность' in result['message']
+    assert 'Основной агент' in result['message'] and 'вероятность' in result['message']
     assert len(env.calls) == 1
     assert set(env.calls[0][1]['questions']) == MAIN_KEYS
     second = env.ctx.hooks['pre_verify'](session_id='p', final_response='Теперь готово, но всё ещё без тестов.', changed_paths=['C:/synthetic/a.py'], attempt=0)
@@ -37,7 +37,7 @@ def test_no_tracked_edits_no_continue_but_general_final_still_advisory(env):
     original = 'Компонент готов. Исходные свидетельства сохранены.'
     text = env.ctx.hooks['transform_llm_output'](session_id='p', response_text=original)
     assert text.startswith(original)
-    assert 'PPLX' in text and 'Ограничение' in text
+    assert 'DECISIONS' in text and 'Ограничение' in text
     assert isinstance(text, str) and len(env.calls) == 1
 
 
@@ -47,7 +47,7 @@ def test_main_review_fail_open_preserves_final_adds_ru_warning_no_fake_continue(
     assert env.ctx.hooks['pre_verify'](session_id='p', final_response='Готово.', changed_paths=['C:/a.py'], attempt=0) is None
     original = 'Готово. Оригинальное заявление не переписано.'
     output = env.ctx.hooks['transform_llm_output'](session_id='p', response_text=original)
-    assert output.startswith(original) and 'заключение PPLX отсутствует' in output
+    assert output.startswith(original) and 'заключение Decision Review отсутствует' in output
     assert not env.calls
 
 @pytest.mark.parametrize('method', ['pre_verify', 'transform_llm_output'])
@@ -89,7 +89,7 @@ def test_same_parent_goal_retry_recommendation_cap_across_changed_evidence(env):
             result=json.dumps({'results': [{'status': 'completed', 'summary': summary}]}), session_id='p')
         return json.loads(output)['pplx_review'][0]
     first = run('Первая попытка не выполнила цель')
-    assert first['verdict'] == 'RETRY' and 'Sol' in first['recommendation']
+    assert first['verdict'] == 'RETRY' and 'Основной агент' in first['recommendation']
     second = run('Вторая попытка также не выполнила цель')
     assert second['verdict'] == 'INSPECT' and 'лимит' in second['reason']
     assert len(env.calls) == 2

@@ -6,7 +6,7 @@ from conftest import answer_payload, start
 
 GOAL = 'Проверить компонент и сохранить реальные свидетельства'
 FINAL = 'Компонент проверен: 2 passed. Ограничения сохранены.'
-DRAFT_SCOPE = 'Область PPLX: исходный черновик (DRAFT), не текущий финальный ответ.'
+DRAFT_SCOPE = 'DECISIONS: исходный черновик (DRAFT), не текущий финальный ответ.'
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def render(runtime, text=FINAL, **kwargs):
 def test_identical_fallback_final_keeps_exact_note_without_http(env, renderer):
     first = render(renderer)
     assert first.startswith(FINAL + '\n\n---\n')
-    assert 'PPLX ACCEPT' in first and 'DRAFT' not in first
+    assert 'DECISIONS ACCEPT' in first and 'DRAFT' not in first
     once = renderer.main_state('p')['main_review_once']
     frozen = once['review_json']
     assert once['draft'] is False and len(env.calls) == 1
@@ -48,7 +48,7 @@ def adverse(request, payload):
 def test_fallback_non_accept_receipt_is_also_idempotent(env, renderer, outcome):
     env.replies.append(adverse if outcome == 'retry' else httpx.ConnectError('synthetic failure'))
     first = render(renderer)
-    assert ('PPLX RETRY' if outcome == 'retry' else 'заключение PPLX отсутствует') in first
+    assert ('DECISIONS RETRY' if outcome == 'retry' else 'заключение Decision Review отсутствует') in first
     assert 'DRAFT' not in first and 'Ограничение' in first
     assert render(renderer) == first
     assert len(env.calls) == 1 and len(env.secrets) == 1
@@ -81,7 +81,7 @@ def test_fallback_receipt_does_not_assess_a_different_candidate(env, renderer, c
         renderer.record_tool_evidence('p', 'read_file', {'path': 'component.py'}, 'Новый trace.')
     scoped = render(renderer, original)
     assert scoped.startswith(original + '\n\n---\n') and DRAFT_SCOPE in scoped
-    assert 'Повторная PPLX-оценка финала не выполнялась.' in scoped
+    assert 'Повторная Decisions-оценка финала не выполнялась.' in scoped
     assert 'verification_pass_status=unknown' in scoped
     assert len(env.calls) == 1 and scoped != first
 
@@ -106,10 +106,10 @@ def test_native_marker_without_receipt_retains_no_http_tombstone(env, renderer, 
         renderer.main_state('p').pop('main_review_once')
     before = len(env.calls)
     scoped = render(renderer, verification_pass_status=status)
-    assert DRAFT_SCOPE in scoped and 'заключение PPLX отсутствует' in scoped
+    assert DRAFT_SCOPE in scoped and 'заключение Decision Review отсутствует' in scoped
     once = renderer.main_state('p')['main_review_once']
     assert once['http_started'] is True and once['review_json'] is None
-    assert 'заключение PPLX отсутствует' in render(renderer)
+    assert 'заключение Decision Review отсутствует' in render(renderer)
     assert renderer.pre_verify(session_id='p', final_response=FINAL, all_finals=True) is None
     assert len(env.calls) == before
 
@@ -130,7 +130,7 @@ def test_invalid_receipt_cannot_replenish_same_turn_http(env, renderer, fence):
         renderer.store.clock = lambda: now + 301
     scoped = render(renderer)
     assert scoped.startswith(FINAL + '\n\n---\n')
-    assert 'заключение PPLX отсутствует' in scoped and 'PPLX ACCEPT' not in scoped
+    assert 'заключение Decision Review отсутствует' in scoped and 'DECISIONS ACCEPT' not in scoped
     assert once['review_json'] == frozen
     assert renderer.pre_verify(session_id='p', final_response=FINAL, all_finals=True) is None
     assert len(env.calls) == 1 and len(env.secrets) == 1
@@ -168,11 +168,11 @@ def test_mutated_public_cache_does_not_change_frozen_fallback_note(env, renderer
 
 def test_new_native_turn_replenishes_main_http_only(env, renderer):
     env.replies.append(adverse)
-    assert 'PPLX RETRY' in render(renderer)
+    assert 'DECISIONS RETRY' in render(renderer)
     renderer.pre_llm_call(session_id='p', turn_id='turn-2', task_id='task-1', user_message=GOAL)
     env.replies.append(adverse)
     first = render(renderer)
-    assert 'PPLX RETRY' in first and 'DRAFT' not in first
+    assert 'DECISIONS RETRY' in first and 'DRAFT' not in first
     assert render(renderer) == first and len(env.calls) == 2
 
 
@@ -209,7 +209,7 @@ def test_overlapping_main_hooks_keep_one_http_and_original_receipt_scope(env, re
         assert entered.wait(1), 'First callback must reach controlled HTTP'
         if primary == 'pre_verify':
             pending = render(renderer, 'Исправленный кандидат пока receipt не готов.')
-            assert DRAFT_SCOPE in pending and 'заключение PPLX отсутствует' in pending
+            assert DRAFT_SCOPE in pending and 'заключение Decision Review отсутствует' in pending
         else:
             assert renderer.pre_verify(session_id='p', final_response=FINAL, all_finals=True) is None
         assert len(env.calls) == 1
@@ -219,5 +219,5 @@ def test_overlapping_main_hooks_keep_one_http_and_original_receipt_scope(env, re
         assert not caller.is_alive(), 'Fixture caller must finish naturally'
     assert len(results) == 1
     final = render(renderer)
-    assert 'PPLX ACCEPT' in final and (DRAFT_SCOPE in final) is (primary == 'pre_verify')
+    assert 'DECISIONS ACCEPT' in final and (DRAFT_SCOPE in final) is (primary == 'pre_verify')
     assert render(renderer) == final and len(env.calls) == 1

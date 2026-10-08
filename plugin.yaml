@@ -1,8 +1,8 @@
 manifest_version: 2
-name: pplx-decider-review
-version: "0.1.8"
+name: decision-review
+version: "0.2.0"
 kind: standalone
-description: "Ограниченный вероятностный PPLX reviewer через OpenRouter Decisions; без автоматических инструментов."
+description: "Decision Review: вероятностная оценка результатов через OpenRouter Decisions; модель задаётся конфигурацией, без автоматических инструментов."
 optional_env:
   - OPENROUTER_API_KEY
 python_dependencies:
@@ -25,8 +25,8 @@ config_schema:
     description: "Только точное openrouter."
   reviewer_model:
     type: str
-    default: perplexity/pplx-decider-v1-27b
-    description: "Точная запрошенная модель, без fallback."
+    default: openai/gpt-6-luna-decisions
+    description: "Decisions-модель задаётся plugin-relative reviewer_model; только OpenRouter и фиксированный Decisions endpoint, без fallback на chat или другую модель."
   endpoint:
     type: str
     default: https://openrouter.ai/api/alpha/decisions

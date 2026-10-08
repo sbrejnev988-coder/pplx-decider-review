@@ -5,7 +5,7 @@ import pytest
 from conftest import start
 
 GOAL = 'Проверить компонент и сохранить реальные свидетельства'
-DRAFT_SCOPE = 'Область PPLX: исходный черновик (DRAFT), не текущий финальный ответ.'
+DRAFT_SCOPE = 'DECISIONS: исходный черновик (DRAFT), не текущий финальный ответ.'
 
 @pytest.fixture
 def exact_renderer(env):
@@ -30,13 +30,13 @@ def test_lossy_equivalent_changed_response_is_not_current_final(env, exact_rende
     transport = importlib.import_module(env.p.__name__ + '.transport')
     assert a != b and transport.scrub_text(a) == transport.scrub_text(b)
     first = exact_renderer.transform_llm_output(session_id='p', response_text=a)
-    assert first.startswith(a + '\n\n---\n') and 'PPLX ACCEPT' in first and 'DRAFT' not in first
+    assert first.startswith(a + '\n\n---\n') and 'DECISIONS ACCEPT' in first and 'DRAFT' not in first
     once = exact_renderer.main_state('p')['main_review_once']
     receipt = once['review_json']
     assert exact_renderer.transform_llm_output(session_id='p', response_text=a) == first
     second = exact_renderer.transform_llm_output(session_id='p', response_text=b)
     assert second.startswith(b + '\n\n---\n') and DRAFT_SCOPE in second
-    assert 'Повторная PPLX-оценка финала не выполнялась.' in second
+    assert 'Повторная Decisions-оценка финала не выполнялась.' in second
     assert once['review_json'] == receipt and len(env.calls) == len(env.secrets) == 1
     wire = ''.join(request.content.decode('utf-8') for request, _payload in env.calls)
     assert 'syntheticBearerTokenAAAAAAAA' not in wire and 'syntheticBearerTokenBBBBBBBB' not in wire
@@ -51,7 +51,7 @@ def test_late_evidence_after_candidate_check_refuses_stale_decoration(env, exact
     text = 'Проверка компонента завершена; исходный ответ сохранён.'
     if repeat:
         first = runtime.transform_llm_output(session_id='p', response_text=text)
-        assert 'PPLX ACCEPT' in first and 'DRAFT' not in first
+        assert 'DECISIONS ACCEPT' in first and 'DRAFT' not in first
     state = runtime.main_state('p')
     scope = runtime.capture_scope('p', state=state)
     revision = state['revision']

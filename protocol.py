@@ -2,8 +2,16 @@
 import math
 import re
 
-MODEL = 'perplexity/pplx-decider-v1-27b'
+MODEL = 'openai/gpt-6-luna-decisions'
 ENDPOINT = 'https://openrouter.ai/api/alpha/decisions'
+MAX_MODEL_LENGTH = 128
+_MODEL_IDENTIFIER = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*')
+
+
+def valid_model_identifier(value):
+    # Literal provider/model, без нормализации, URL-синтаксиса и сетевого каталога.
+    return (isinstance(value, str) and len(value) <= MAX_MODEL_LENGTH
+            and _MODEL_IDENTIFIER.fullmatch(value) is not None)
 
 
 def number(value, low=0, high=1):
@@ -12,11 +20,13 @@ def number(value, low=0, high=1):
     return value
 
 
-def validate(data, questions):
+def validate(data, questions, expected_model=MODEL):
+    if not valid_model_identifier(expected_model):
+        raise ValueError('Некорректный идентификатор запрошенной модели Decisions.')
     if not isinstance(data, dict) or 'error' in data:
         raise ValueError('Некорректный ответ Decisions.')
     model = data.get('model')
-    if not isinstance(model, str) or (model != MODEL and re.fullmatch(re.escape(MODEL) + r'-[0-9]{8}', model) is None):
+    if not isinstance(model, str) or (model != expected_model and re.fullmatch(re.escape(expected_model) + r'-[0-9]{8}', model) is None):
         raise ValueError('Фактическая модель не соответствует запрошенной.')
     answers = data.get('answers')
     if not isinstance(answers, dict):
@@ -92,7 +102,9 @@ def policy(answers, main=False, accept=.8, retry=.65):
     return verdict
 
 
-def unavailable(reason):
-    return {'verdict': 'INSPECT', 'verified': False, 'requested_model': MODEL, 'model': None,
+def unavailable(reason, requested_model=MODEL):
+    # Невалидная настройка не превращается в fallback и не выводится как URL/секрет.
+    requested_model = requested_model if valid_model_identifier(requested_model) else None
+    return {'verdict': 'INSPECT', 'verified': False, 'requested_model': requested_model, 'model': None,
             'request_id': None, 'provider': None, 'usage': None, 'answers': {}, 'errors': [reason],
-            'reason': 'PPLX-проверка недоступна или неполна; результат не подтверждён reviewer.'}
+            'reason': 'Decision Review недоступен или неполон; результат не подтверждён reviewer.'}

@@ -80,6 +80,6 @@ def test_nonfinite_native_child_trace_cannot_turn_error_into_accept(publication_
            'display_metadata': {'delegation_id': 'd'}}
     injected = runtime.pre_llm_call(session_id='p', user_message=message,
                                     conversation_history=[row], turn_id='completion')
-    assert 'PPLX INSPECT' in injected['context'] and 'PPLX ACCEPT' not in injected['context']
+    assert 'DECISIONS INSPECT' in injected['context'] and 'DECISIONS ACCEPT' not in injected['context']
     assert len(calls) == 1 and raw_error['detail'] != raw_error['detail']
     assert not runtime.inflight.locked()

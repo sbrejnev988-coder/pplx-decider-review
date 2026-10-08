@@ -15,7 +15,7 @@ def test_audit_has_required_metadata_without_result_text(env):
     env.replies.append(reply)
     review = runtime.cached_review('parent', 'Проверить тестовую строку', {'status': 'completed', 'summary': 'PRIVATE-SYNTHETIC-RESULT'})
     assert review['verified']
-    path = env.home[0] / 'plugin-data/pplx-decider-review/reviews.jsonl'
+    path = env.home[0] / 'plugin-data/decision-review/reviews.jsonl'
     row = json.loads(path.read_text(encoding='utf-8').strip())
     assert {'timestamp', 'target_type', 'session_id', 'model', 'request_id', 'probabilities', 'policy_decision', 'latency_ms', 'error_category'} <= row.keys()
     assert datetime.fromisoformat(row['timestamp']).tzinfo is not None
@@ -84,7 +84,7 @@ def test_async_unknown_completeness_cannot_accept_and_audit_matches(env):
     stop(env)
     context = delivery(env)['context']
     assert 'INSPECT' in context and 'ACCEPT' not in context
-    row = json.loads((env.home[0] / 'plugin-data/pplx-decider-review/reviews.jsonl').read_text(encoding='utf-8').strip())
+    row = json.loads((env.home[0] / 'plugin-data/decision-review/reviews.jsonl').read_text(encoding='utf-8').strip())
     assert row['policy_decision'] == 'INSPECT'
     assert row['verified'] is True
     assert row['probabilities']['goal_completed']['noul'] == 0.95

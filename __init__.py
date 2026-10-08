@@ -6,6 +6,7 @@ import contextvars
 import threading
 import time
 from dataclasses import dataclass
+from .protocol import MODEL, ENDPOINT
 
 
 @dataclass(frozen=True)
@@ -22,9 +23,8 @@ class PolicySnapshot:
     retry: float
     retry_limit: int
     cache_ttl: float
+    model: str | None
 
-MODEL = 'perplexity/pplx-decider-v1-27b'
-ENDPOINT = 'https://openrouter.ai/api/alpha/decisions'
 CHILD_KEYS = {
     'goal_completed': 'Выполнена ли поставленная дочернему агенту цель?',
     'result_reliable': 'Подтверждена ли надёжность результата предоставленными свидетельствами?',
@@ -83,34 +83,38 @@ class ReviewRuntime:
         return self.ctx.get_config(name, default)
 
     def review(self, goal, evidence, main=False, deadline=None, policy=None, expected_scope=None, main_reservation=None):
-        from .protocol import unavailable, number
+        from .protocol import unavailable, valid_model_identifier
         from .transport import request_once
+        # Payload, validator и отказы привязаны к одному immutable snapshot.
+        policy = (policy if policy is not None else
+                  expected_scope[7] if expected_scope is not None else self.snapshot_policy())
+        def reject(reason):
+            return unavailable(reason, requested_model=policy.model)
         with self.store.lock:
             generation = self.generation
             if self.closed or (expected_scope is not None and not self.scope_current(expected_scope)):
-                return unavailable('Плагин выгружен; поздний ответ не применяется.')
+                return reject('Плагин выгружен; поздний ответ не применяется.')
         # Один validated snapshot задаёт digest и policy; native atomic revision отсутствует.
-        policy = policy if policy is not None else self.snapshot_policy()
-        if not policy.valid:
-            return unavailable('Отказ: неподдерживаемая конфигурация reviewer.')
+        if not policy.valid or not valid_model_identifier(policy.model):
+            return reject('Отказ: неподдерживаемая конфигурация reviewer.')
         if not policy.enabled or not (policy.main_enabled if main else policy.child_enabled):
-            return unavailable('Плагин либо выбранная ветвь отключены.')
+            return reject('Плагин либо выбранная ветвь отключены.')
         if self.config_tag() != policy.tag or (expected_scope is not None and not self.scope_current(expected_scope)):
-            return unavailable('Изменилась конфигурация reviewer.')
+            return reject('Изменилась конфигурация reviewer.')
         budget, timeout, accept, retry = policy.budget, policy.timeout, policy.accept, policy.retry
         try:
             from agent.secret_scope import get_secret
             key = get_secret('OPENROUTER_API_KEY', '')
         except Exception:
-            return unavailable('Недоступен scoped ключ либо некорректна конфигурация.')
+            return reject('Недоступен scoped ключ либо некорректна конфигурация.')
         if not isinstance(key, str) or not key:
-            return unavailable('В профиле владельца отсутствует OPENROUTER_API_KEY.')
+            return reject('В профиле владельца отсутствует OPENROUTER_API_KEY.')
         end = min(deadline, time.monotonic() + budget) if deadline is not None else time.monotonic() + budget
         with self.store.lock:
             if self.closed or generation != self.generation or self.config_tag() != policy.tag or (expected_scope is not None and not self.scope_current(expected_scope)):
-                return unavailable('Плагин выгружен; поздний ответ не применяется.')
+                return reject('Плагин выгружен; поздний ответ не применяется.')
             if end <= time.monotonic() or not self.inflight.acquire(blocking=False):
-                return unavailable('Исчерпан бюджет callback либо предыдущий запрос ещё выполняется.')
+                return reject('Исчерпан бюджет callback либо предыдущий запрос ещё выполняется.')
         done = threading.Event()
         result = []
         owner_context = contextvars.copy_context()
@@ -122,11 +126,11 @@ class ReviewRuntime:
                     if admitted and main and expected_scope is not None and policy.mode == 'bounded':
                         admitted = self.admit_main_request(expected_scope, main_reservation)
                 if not admitted:
-                    result.append(unavailable('Изменилась сессия, задача либо конфигурация reviewer.'))
+                    result.append(reject('Изменилась сессия, задача либо конфигурация reviewer.'))
                     return
-                result.append(request_once(goal, evidence, questions(main), key, self.transport, timeout, main, accept, retry, deadline=end))
+                result.append(request_once(goal, evidence, questions(main), key, self.transport, timeout, main, accept, retry, deadline=end, model=policy.model))
             except Exception:
-                result.append(unavailable('Неожиданная ошибка ограниченного reviewer.'))
+                result.append(reject('Неожиданная ошибка ограниченного reviewer.'))
             finally:
                 self.inflight.release()
                 done.set()
@@ -134,19 +138,19 @@ class ReviewRuntime:
             with self.store.lock:
                 if self.closed or generation != self.generation or self.config_tag() != policy.tag or (expected_scope is not None and not self.scope_current(expected_scope)):
                     self.inflight.release()
-                    return unavailable('Плагин выгружен; reviewer не запускается.')
-                threading.Thread(target=lambda: owner_context.run(worker), daemon=True, name='pplx-review').start()
+                    return reject('Плагин выгружен; reviewer не запускается.')
+                threading.Thread(target=lambda: owner_context.run(worker), daemon=True, name='decision-review').start()
         except Exception:
             self.inflight.release()
-            return unavailable('Не удалось запустить ограниченный reviewer.')
+            return reject('Не удалось запустить ограниченный reviewer.')
         if not done.wait(max(0, end - time.monotonic())):
-            return unavailable('Истёк бюджет callback; поздний ответ не применяется, слот занят до окончания запроса.')
+            return reject('Истёк бюджет callback; поздний ответ не применяется, слот занят до окончания запроса.')
         with self.store.lock:
             if self.closed or generation != self.generation or self.config_tag() != policy.tag or (expected_scope is not None and not self.scope_current(expected_scope)):
-                return unavailable('Плагин выгружен; поздний ответ не применяется.')
+                return reject('Плагин выгружен; поздний ответ не применяется.')
             if time.monotonic() >= end:
-                return unavailable('Истёк бюджет callback; поздний ответ не применяется.')
-            return result[0] if result else unavailable('Reviewer не вернул проверенный ответ.')
+                return reject('Истёк бюджет callback; поздний ответ не применяется.')
+            return result[0] if result else reject('Reviewer не вернул проверенный ответ.')
 
     def close(self):
         with self.store.lock:
@@ -169,7 +173,7 @@ class ReviewRuntime:
 
     def snapshot_policy(self):
         from .state import fingerprint
-        from .protocol import number
+        from .protocol import number, valid_model_identifier
         defaults = {'provider': 'openrouter', 'reviewer_model': MODEL, 'endpoint': ENDPOINT, 'language': 'ru', 'mode': 'bounded',
                     'min_accept_confidence': .8, 'retry_threshold': .65, 'max_review_retries': 1, 'fail_open_on_api_error': True,
                     'enabled': False, 'review_main_agent': True, 'review_subagents': True,
@@ -177,7 +181,8 @@ class ReviewRuntime:
                     'state_ttl_seconds': 1800, 'log_enabled': True, 'log_max_bytes': 1048576, 'log_keep_files': 3}
         values = {k: self.setting(k, d) for k, d in defaults.items()}
         tag = fingerprint({k: [type(v).__name__, str(v)[:256]] for k, v in values.items()})
-        valid = (values['provider'] == 'openrouter' and values['reviewer_model'] == MODEL and values['endpoint'] == ENDPOINT
+        model = values['reviewer_model'] if valid_model_identifier(values['reviewer_model']) else None
+        valid = (values['provider'] == 'openrouter' and model is not None and values['endpoint'] == ENDPOINT
                  and values['language'] == 'ru' and values['mode'] in ('bounded', 'advisory')
                  and values['fail_open_on_api_error'] is True and type(values['max_review_retries']) is int
                  and 0 <= values['max_review_retries'] <= 1)
@@ -193,7 +198,7 @@ class ReviewRuntime:
         ttl = ttl if type(ttl) in (int, float) and .02 <= ttl <= 1800 else 300
         return PolicySnapshot(tag, values['mode'], valid, values['enabled'] is True, values['review_main_agent'] is True,
                               values['review_subagents'] is True, budget, timeout, accept, retry,
-                              values['max_review_retries'] if valid else 0, ttl)
+                              values['max_review_retries'] if valid else 0, ttl, model)
 
     def config_tag(self):
         return self.snapshot_policy().tag
@@ -228,19 +233,25 @@ class ReviewRuntime:
         from .state import fingerprint, bounded_put
         from .protocol import unavailable
         entered_at = time.monotonic()
+        policy = expected_scope[7] if expected_scope is not None else None
+        def reject(reason):
+            model = policy.model if policy is not None else self.setting('reviewer_model', MODEL)
+            return unavailable(reason, requested_model=model)
         if deadline is not None and entered_at >= deadline:
-            return unavailable('Исчерпан бюджет callback до подготовки evidence.')
+            return reject('Исчерпан бюджет callback до подготовки evidence.')
         with self.store.lock:
             scope = expected_scope if expected_scope is not None else self.capture_scope(session_id)
+            if scope is not None:
+                policy = scope[7]
             if not self.scope_current(scope):
-                return unavailable('Изменилась сессия, задача либо конфигурация reviewer.')
+                return reject('Изменилась сессия, задача либо конфигурация reviewer.')
             key, state = scope[:2]
             generation, policy = scope[6:]
         if not policy.enabled or not (policy.main_enabled if main else policy.child_enabled):
-            return unavailable('Плагин либо выбранная ветвь отключены.')
+            return reject('Плагин либо выбранная ветвь отключены.')
         end = min(deadline, entered_at + policy.budget) if deadline is not None else entered_at + policy.budget
         if time.monotonic() >= end:
-            return unavailable('Исчерпан бюджет callback до подготовки evidence.')
+            return reject('Исчерпан бюджет callback до подготовки evidence.')
         # Completeness is classified BEFORE scrubbing can erase sensitive error keys.
         def flag(name):
             if name not in evidence:
@@ -261,7 +272,7 @@ class ReviewRuntime:
         digest = fingerprint([goal[:2000], evidence, main, str(identity)[:128], policy.tag, allow_accept, completeness, namespace])
         with self.store.lock:
             if time.monotonic() >= end or not self.scope_current(scope):
-                return unavailable('Плагин выгружен; поздний ответ не применяется.')
+                return reject('Плагин выгружен; поздний ответ не применяется.')
             hit = state['cache'].get(digest)
             ttl = policy.cache_ttl
             if hit is not None and self.store.clock() - hit['time'] >= ttl:
@@ -279,7 +290,7 @@ class ReviewRuntime:
             result = dict(result, verdict='INSPECT', reason='Исходный дочерний статус, exit_reason или schema свидетельствуют о неполноте; успех не подтверждён.')
         with self.store.lock:
             if time.monotonic() >= end or not self.scope_current(scope):
-                return unavailable('Плагин выгружен; поздний ответ не применяется.')
+                return reject('Плагин выгружен; поздний ответ не применяется.')
             bounded_put(state['cache'], digest, {'time': self.store.clock(), 'review': result})
             result = self.limit_recommendation(state, goal, json.loads(json.dumps(result)), policy,
                                                main_turn=scope[3] if main else None)
@@ -290,7 +301,7 @@ class ReviewRuntime:
                     write_review(key[0], key[1], result, self.setting('log_max_bytes', 1048576), self.setting('log_keep_files', 3), main=main, latency_ms=latency_ms)
                 except Exception:
                     pass  # Best-effort audit never exposes raw exceptions or replaces native output.
-            return result if self.scope_current(scope) else unavailable('Изменилась сессия, задача либо конфигурация reviewer.')
+            return result if self.scope_current(scope) else reject('Изменилась сессия, задача либо конфигурация reviewer.')
 
     def limit_recommendation(self, state, goal, result, policy=None, main_turn=None):
         from .state import fingerprint, bounded_put
@@ -303,9 +314,9 @@ class ReviewRuntime:
                 used = state['retries'].get(task, 0)
                 if used >= limit:
                     return dict(result, verdict='INSPECT', reason='Достигнут лимит рекомендаций повтора по этой родительской цели; требуется ручная проверка.',
-                                recommendation='Sol: не повторяй автоматически; проверь свидетельства и сообщи ограничение.')
+                                recommendation='Основной агент: не повторяй автоматически; проверь свидетельства и сообщи ограничение.')
                 bounded_put(state['retries'], task, used + 1)
-            result['recommendation'] = ('Sol: сначала сверь требования с фактическими результатами. '
+            result['recommendation'] = ('Основной агент: сначала сверь требования с фактическими результатами. '
                                         'Если подтвердятся недочёты, исправь их. '
                                         'Повтор по этой цели допускается не более одного раза; '
                                         'автоматически запускать субагента нельзя.')

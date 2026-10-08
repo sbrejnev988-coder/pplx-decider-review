@@ -8,7 +8,25 @@ from test_native_config import native_env  # fixture discovery; SDK import то�
 
 
 def log_path(home):
-    return home / 'plugin-data' / 'pplx-decider-review' / 'reviews.jsonl'
+    return home / 'plugin-data' / 'decision-review' / 'reviews.jsonl'
+
+
+@pytest.mark.parametrize('scenario', ['default'])
+def test_new_log_identity_never_migrates_or_prunes_legacy_history(publication_env):
+    import importlib
+    env = publication_env
+    logger = importlib.import_module(type(env.runtime).__module__ + '.review_log')
+    protocol = importlib.import_module(type(env.runtime).__module__ + '.protocol')
+    legacy = env.home / 'plugin-data' / 'pplx-decider-review'
+    legacy.mkdir(parents=True)
+    for name in ('reviews.jsonl', 'reviews.jsonl.1', 'reviews.jsonl.2', 'retained.backup'):
+        (legacy / name).write_bytes(b'legacy-model-history\n' * 200)
+    before = {path: path.read_bytes() for path in legacy.iterdir()}
+    logger.write_review(env.home, 'migration-owner', protocol.unavailable('Синтетический отказ'),
+                        max_bytes=1024, keep=1)
+    assert log_path(env.home).is_file()
+    assert set(legacy.iterdir()) == set(before)
+    assert {path: path.read_bytes() for path in before} == before
 
 
 @pytest.mark.parametrize('scenario', ['default'])
@@ -184,7 +202,7 @@ def test_disabled_logging_does_not_prune_inherited_files(publication_env):
     env = publication_env
     config_path = env.home / 'config.yaml'
     config = json.loads(config_path.read_text(encoding='utf-8'))
-    settings = config['plugins']['entries']['pplx-decider-review']['settings']
+    settings = config['plugins']['entries']['decision-review']['settings']
     settings.update(log_enabled=False, log_max_bytes=256, log_keep_files=1)
     config_path.write_text(json.dumps(config), encoding='utf-8')
     assert env.ctx.get_config('log_enabled', True) is False

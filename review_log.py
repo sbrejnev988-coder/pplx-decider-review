@@ -35,7 +35,8 @@ def write_review(home, session_id, review, max_bytes=MAX_BYTES, keep=3, *, main=
     limit = max_bytes if type(max_bytes) is int and 256 <= max_bytes <= MAX_BYTES else MAX_BYTES
     copies = keep if type(keep) is int and 1 <= keep <= 3 else 3
     root = Path(home)
-    folder = root / 'plugin-data' / 'pplx-decider-review'
+    # Новый ID пишет только в свой корень; прежние журналы не мигрируются.
+    folder = root / 'plugin-data' / 'decision-review'
     path = folder / 'reviews.jsonl'
     try:
         with _LOCK:

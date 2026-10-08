@@ -1,5 +1,14 @@
 import json
-from conftest import start, MODEL
+from conftest import start, MODEL, answer_payload
+
+
+def test_answer_payload_uses_selected_model_without_inventing_provider():
+    for selected in (MODEL, 'synthetic/alternate-decisions'):
+        request = {'model': selected, 'questions': {'task_satisfied': {'type': 'noul'}}}
+        reply = answer_payload(request)
+        assert reply['model'] == request['model']
+        assert reply['provider'] == 'Synthetic OpenAI'  # A fixed fixture label, not a routing fact.
+        assert reply['answers']['task_satisfied'] == {'type': 'noul', 'noul': .95}
 
 
 def test_sync_native_result_keeps_every_field_and_reviews_through_decisions(env):
@@ -16,7 +25,7 @@ def test_sync_native_result_keeps_every_field_and_reviews_through_decisions(env)
     assert review['verified'] is True
     assert review['model'] == MODEL
     assert review['request_id'] == 'synthetic-response'
-    assert review['provider'] == 'Perplexity'
+    assert review['provider'] == 'Synthetic OpenAI'
     assert review['usage']['input_tokens'] == 10
     assert len(env.calls) == 1
     request, payload = env.calls[0]

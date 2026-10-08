@@ -5,7 +5,7 @@ import re
 import time
 from itertools import islice
 import httpx
-from .protocol import MODEL, ENDPOINT, validate, policy, unavailable
+from .protocol import MODEL, ENDPOINT, validate, policy, unavailable, valid_model_identifier
 
 SENSITIVE = re.compile(r'(?i)(password|passwd|secret|token|api.?key|authorization|cookie|credential|env.?contents|dotenv|^env$|^\.env$|private.?key)')
 BEARER = re.compile(r'(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+')
@@ -129,24 +129,28 @@ def safe_state(goal, evidence):
     return json.loads(redacted)
 
 
-def request_once(goal, evidence, qs, key, transport, timeout, main, accept, retry, deadline=None):
+def request_once(goal, evidence, qs, key, transport, timeout, main, accept, retry, deadline=None, *, model=MODEL):
     # Cooperative overall deadline: a blocking network/DNS phase may outlive it.
+    if not valid_model_identifier(model):
+        return unavailable('Отказ: некорректный идентификатор модели Decisions.', requested_model=model)
     end = min(deadline, time.monotonic() + timeout) if deadline is not None else time.monotonic() + timeout
+    def reject(reason):
+        return unavailable(reason, requested_model=model)
     def check_deadline():
         if time.monotonic() >= end:
             raise httpx.TimeoutException('Decisions deadline')
     try:
         check_deadline()
-        payload = {'model': MODEL, 'state': safe_state(goal, evidence), 'questions': qs}
+        payload = {'model': model, 'state': safe_state(goal, evidence), 'questions': qs}
         check_deadline()
         with httpx.Client(transport=transport, timeout=timeout, follow_redirects=False, trust_env=False) as client:
             check_deadline()
             with client.stream('POST', ENDPOINT, json=payload, headers={'Authorization': 'Bearer ' + key, 'Accept-Encoding': 'identity'}) as response:
                 check_deadline()
                 if response.status_code != 200:
-                    return unavailable('OpenRouter HTTP ' + str(response.status_code) + '; повтор запроса отключён.')
+                    return reject('OpenRouter HTTP ' + str(response.status_code) + '; повтор запроса отключён.')
                 if response.headers.get('Content-Encoding', '').strip().lower() not in ('', 'identity'):
-                    return unavailable('Сжатый ответ Decisions отклонён до декодирования.')
+                    return reject('Сжатый ответ Decisions отклонён до декодирования.')
                 chunks = bytearray()
                 # Pre-consumed in-memory transports have no raw iterator. Real stream
                 # responses use iter_raw exclusively; no content decoder is invoked.
@@ -155,18 +159,18 @@ def request_once(goal, evidence, qs, key, transport, timeout, main, accept, retr
                 for chunk in raw:
                     check_deadline()
                     if len(chunks) + len(chunk) > 131072:
-                        return unavailable('Ответ Decisions превышает лимит размера.')
+                        return reject('Ответ Decisions превышает лимит размера.')
                     chunks.extend(chunk)
                     check_deadline()
                 check_deadline()
                 data = json.loads(chunks)
         check_deadline()
-        parsed = validate(data, qs)
+        parsed = validate(data, qs, expected_model=model)
         check_deadline()
-        return dict(parsed, verdict=policy(parsed['answers'], main, accept, retry), verified=True, requested_model=MODEL,
+        return dict(parsed, verdict=policy(parsed['answers'], main, accept, retry), verified=True, requested_model=model,
                     errors=[], reason='Вероятностная оценка не заменяет фактическую проверку и не разрешает действия.')
     except httpx.TimeoutException:
-        return unavailable('Истёк сетевой таймаут Decisions; повтор отключён.')
+        return reject('Истёк сетевой таймаут Decisions; повтор отключён.')
     except Exception:
         # Никаких str(exc), HTTP body или чужих произвольных полей в результатах/журнале.
-        return unavailable('Неполный ответ, ошибка транспорта или безопасной подготовки Decisions.')
+        return reject('Неполный ответ, ошибка транспорта или безопасной подготовки Decisions.')

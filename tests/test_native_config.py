@@ -48,7 +48,7 @@ def native_env(monkeypatch, tmp_path, record_property, scenario):
     config = {
         'model': {'default': 'synthetic-main-do-not-use', 'provider': 'synthetic'},
         'plugins': {'entries': {
-            'pplx-decider-review': {'settings': settings},
+            'decision-review': {'settings': settings},
             'synthetic-neighbor': {'settings': {MODEL_KEY: UNSUPPORTED_MODEL}},
         }},
     }
@@ -56,7 +56,7 @@ def native_env(monkeypatch, tmp_path, record_property, scenario):
     assert hermes_constants.get_hermes_home().resolve() == home.resolve()
     production = Path(os.environ.get('PPLX_TEST_PRODUCTION_ROOT', str(ROOT))).resolve()
     manifest = native.parse_manifest_file(production / 'plugin.yaml', production, 'user', '')
-    assert manifest is not None and manifest.name == 'pplx-decider-review'
+    assert manifest is not None and manifest.name == 'decision-review'
     manager = native.PluginManager(scope_key=str(home))
     ctx = native.PluginContext(manifest, manager)
     assert type(ctx) is native.PluginContext
@@ -69,7 +69,7 @@ def native_env(monkeypatch, tmp_path, record_property, scenario):
     for forbidden in ('model', 'plugins', 'security', 'settings', 'plugins.entries.synthetic-neighbor.settings.reviewer_model', '../reviewer_model'):
         with pytest.raises(ValueError, match='plugin-relative'):
             ctx.get_config(forbidden, None)
-    spec = importlib.util.spec_from_file_location('pplx_native_config_regression', production / '__init__.py', submodule_search_locations=[str(production)])
+    spec = importlib.util.spec_from_file_location('decision_review_native_config_regression', production / '__init__.py', submodule_search_locations=[str(production)])
     plugin = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, plugin)
     spec.loader.exec_module(plugin)
@@ -156,7 +156,7 @@ def test_native_scoped_reviewer_model_drives_hook(native_env, surface, scenario,
         assert len(review['answers']) == 7
         if scenario == 'cache_change':
             initial_review = review
-            audit_before = (env.home / 'plugin-data/pplx-decider-review/reviews.jsonl').read_bytes()
+            audit_before = (env.home / 'plugin-data/decision-review/reviews.jsonl').read_bytes()
             before = env.runtime.config_tag()
             # Реальная public scoped запись; не monkeypatch reader и не full/global read.
             env.ctx.set_config(MODEL_KEY, UNSUPPORTED_MODEL)
@@ -165,11 +165,11 @@ def test_native_scoped_reviewer_model_drives_hook(native_env, surface, scenario,
             review, output = invoke()
             assert review['verified'] is False and review['verdict'] == 'INSPECT'
             if surface == 'main':
-                assert 'PPLX INSPECT' in output and 'PPLX ACCEPT' not in output
-                assert (env.home / 'plugin-data/pplx-decider-review/reviews.jsonl').read_bytes() == audit_before
+                assert 'DECISIONS INSPECT' in output and 'DECISIONS ACCEPT' not in output
+                assert (env.home / 'plugin-data/decision-review/reviews.jsonl').read_bytes() == audit_before
                 assert env.runtime.main_state(session_id)['last_final']['review'] == initial_review
             assert env.secret_reads == ['OPENROUTER_API_KEY'] and len(env.calls) == 1, 'Отказ должен предшествовать scoped key/transport и не использовать старый ACCEPT cache'
-    audit_path = env.home / 'plugin-data/pplx-decider-review/reviews.jsonl'
+    audit_path = env.home / 'plugin-data/decision-review/reviews.jsonl'
     rows = [json.loads(line) for line in audit_path.read_text(encoding='utf-8').splitlines()]
     audited_review = initial_review if scenario == 'cache_change' and surface == 'main' else review
     assert rows[-1]['policy_decision'] == audited_review['verdict']
@@ -177,7 +177,7 @@ def test_native_scoped_reviewer_model_drives_hook(native_env, surface, scenario,
     assert rows[-1]['target_type'] == ('main' if surface == 'main' else 'subagent')
     assert rows[-1]['requested_model'] == MODEL
     assert original_final not in audit_path.read_text(encoding='utf-8')
-    assert env.manifest.version == '0.1.8'
+    assert env.manifest.version == '0.2.0'
     assert 'model' not in env.manifest.config_schema
     assert env.manifest.config_schema[MODEL_KEY]['default'] == MODEL
     for key in env.manifest.config_schema:

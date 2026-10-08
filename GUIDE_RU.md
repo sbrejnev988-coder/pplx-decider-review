@@ -1,4 +1,85 @@
-# PPLX Decider Review — 0.1.8
+# Decision Review — 0.2.0
+
+ID: **`decision-review`**. Русские заметки: **`DECISIONS ACCEPT`**, **`DECISIONS RETRY`**, **`DECISIONS INSPECT`**; продукт — **Decision Review**. Default reviewer — точный **`openai/gpt-6-luna-decisions`**, но имя плагина не зависит от модели или её производителя.
+
+## Что означает оценка
+
+Плагин добавляет typed Decisions-оценку отдельно от исходного результата. Вероятности — мнение reviewer по ограниченным предоставленным данным, не установленные факты, доказательство выполнения или разрешение на действия. `verified=true` подтверждает только валидный transport/typed contract. При отсутствии валидного ответа говорится «заключение Decision Review отсутствует»; это не утверждение, что фактические проверки вообще не проводились.
+
+RETRY рекомендует основному агенту самостоятельно сверить требования и реальные свидетельства. Исправлять следует только подтверждённые недочёты. Плагин не выполняет такую сверку или исправления сам, не запускает субагентов, не делает HTTP retry и не обещает автоматического corrective loop. Заметка final-transform не запускает новый цикл работы и не имитирует новый ответ основной модели.
+
+## Модель меняется одной настройкой
+
+Plugin-relative ключ — **`reviewer_model`**, полный путь — `plugins.entries.decision-review.settings.reviewer_model`. Это не main model, delegation или generative `auxiliary.review`. Зарезервированный ключ `model` не alias; core namespace guard сохраняется.
+
+```bash
+hermes -p PROFILE config set plugins.entries.decision-review.settings.reviewer_model openai/gpt-6-luna-decisions
+hermes -p PROFILE config get plugins.entries.decision-review.settings.reviewer_model
+```
+
+Замените `PROFILE` только на разрешённый профиль: текущий перенос касается **default**, не всех профилей. Для следующей совместимой Decisions-модели меняется только значение `reviewer_model`, не исходники. Provider остаётся `openrouter`, endpoint — **`https://openrouter.ai/api/alpha/decisions`**. Не используйте chat model/API или прямой vendor endpoint вместо Decisions; fallback на другой маршрут/модель не добавляется. Допустимый формат ID не доказывает серверную поддержку модели.
+
+Порог ACCEPT 0.8 и RETRY 0.65, остальные диапазоны и бюджеты сохраняются. После смены модели требуется **отдельная калибровка**, а не автоматический перенос выводов о качестве. Превосходство Luna не проверено. Saved config — не доказательство adoption открытым backend; reload и платный запрос требуют собственных разрешений.
+
+## Порядок миграции identity
+
+Полная процедура и откат — [docs/migration-0.2.0.md](docs/migration-0.2.0.md).
+
+- Сохраните old source и прежние собственные settings. Старый ID — `pplx-decider-review`, новый — `decision-review`.
+- **Отключите OLD до включения NEW.** Иначе возможны двойные callbacks и расходы. Native disabled state и `settings.enabled=false` нужны вместе; запись config не доказывает выгрузку callbacks из работающего процесса. Не активируйте NEW, пока actual OLD не отключён; owner reload отдельно, не автоматически.
+- Через штатный scoped config writer перенесите прежние значения в `plugins.entries.decision-review.settings`, без замены целого YAML или копирования окружения. Сохраняются mode, пороги, timeout/cache/log/retry budgets и branch toggles. Единственное целевое изменение настройки — `reviewer_model=openai/gpt-6-luna-decisions`; temporary disabled flags нужны для безопасной стадии переключения.
+- После разрешённых scanner/Doctor/config checks и подтверждённого отсутствия active OLD восстанавливается прежнее состояние enabled у NEW. Если старый плагин был выключен, новый не включайте самовольно. Saved/readback/loaded/executed — разные стадии.
+- Новый журнал — **`plugin-data/decision-review/reviews.jsonl`**. Старый **`plugin-data/pplx-decider-review`** оставляется на месте, без переноса, удаления, исправления исторических model strings или pruning.
+
+Публичный репозиторий по-прежнему **https://github.com/sbrejnev988-coder/pplx-decider-review**. ID manifest не переименовывает GitHub repo. Rename/push, installation, live profile changes и all-profile activation этим source-пакетом не заявляются.
+
+## Native callbacks: поддерживаемая граница
+
+Шесть hooks сохранены: `pre_llm_call`, `transform_tool_result`, `subagent_start`, `subagent_stop`, `pre_verify`, `transform_llm_output`. Public SPI, core flags и native поля **не переименовываются**, Hermes core/SDK/PM не меняются.
+
+Legacy `pre_verify` с tracked paths и integer `attempt=0` может передать bounded `action=continue`, если host действительно вызывает этот callback и обрабатывает рекомендацию. Без этого условия плагин не принуждает продолжение. Advisory, disabled, child, ACCEPT и API error не создают такой nudge.
+
+**All-finals/no-edit corrective loop не является подтверждённой возможностью выбранного стандартного SDK.** Producers `all_finals` и `verification_pass_status` в нём не обнаружены. Plugin callback оставляет совместимые параметры на будущее, но ручная передача kwargs или MockTransport не заменяет producer proof. Не патчите core, не создавайте core fork и не изменяйте public wrappers ради этой функции.
+
+Main reservation резервируется до HTTP по owner/session/native-turn. В `bounded` повтор того же fallback-финала сохраняет исходную заметку; pre-verify receipt, другой кандидат либо переданные native `requested/completed` означают **исходный DRAFT**, не оценку исправленного финала. TTL/goal/config fence и потеря receipt не пополняют main-бюджет; новый запрос допускается лишь новым native turn в удерживаемом state. Если metadata отсутствует, статус остаётся `unknown`; `requested` не означает завершения, `completed` принимается только из metadata и не доказывает устранение каждого замечания.
+
+Локальная identity использует полный исходный ответ, не redacted/lossy projection. Позднее изменение evidence блокирует stale decoration под общей блокировкой без нового HTTP. Egress ограничен excerpt, поэтому полнота внешней оценки не обещается. Первый streaming draft может показываться как interim.
+
+Sync/async provenance, родительский goal-cap, оригинальные statuses/evidence и collision envelope сохраняются. Legacy JSON-ключ **`pplx_review`** — plugin-owned контракт совместимости; он не выбирает модель и не требует core patch. Внутренние `PPLX_TEST_NATIVE_CORE`/`PPLX_TEST_PRODUCTION_ROOT` сохранены для старых test runners; это не пользовательское имя продукта.
+
+## Проверки и ограничения
+
+0.2.0 source и тестовые pins подготовлены. Full suite, сеть, платный canary и живой профиль в этой подготовке не использовались. Объединённые проверки относятся к следующему разрешённому этапу; подготовленные tests не являются выполненными tests.
+
+Offline fixture возвращает **выбранную в запросе `request['model']`**, не фиксированный default. `provider='Synthetic OpenAI'` — явно синтетическая постоянная метка и не вывод о настоящем upstream по slug. Сохранены negative model/response contracts, zero key/HTTP/retry, native namespace/marker и DRAFT controls; added регрессия отдельно проверяет нетронутый legacy log root. Исторические пять Windows symlink skips не удалены; новые counts не выдумываются.
+
+После отдельно разрешённой подготовки зависимостей:
+
+```bash
+python -B scripts/run_tests.py
+# Только с совместимым выбранным interpreter и настоящим проверенным SDK:
+python -B scripts/run_tests.py --core PATH_TO_REVIEWED_HERMES_CORE
+```
+
+Runner создаёт synthetic home, запрещает сеть и credential-file I/O, не удаляет старые roots и печатает retained JUnit/summary. Default unit и native config tests перекрываются и не суммируются. Native one-pass unittest собирается отдельно и требует producer-возможностей для своих all-finals cases; сохранение его assertions не является доказательством поддержки стандартным SDK. Не добавляйте чужие site-packages и не подменяйте настоящий PluginContext/validator permissive mocks.
+
+- State/cache/receipt process-local и ограничены: TTL/eviction/restart — не durable spending ledger и не гарантия обнаружения всех не наблюдавшихся ABA настроек.
+- Deadline кооперативный; blocking network/DNS/OS I/O может пережить caller timeout. Worker не убивается и держит in-flight слот до natural completion.
+- Полная локальная identity читает ответ линейно кусками по 4096 символов; bounded buffer — не hard CPU/wall-clock containment.
+- Sync generation не exact receipt→child mapping; неопределённая provenance не является доказательством успеха.
+- Redaction не гарантирует распознавания любого свободнотекстового секрета. Внешний egress и OpenRouter usage требуют отдельного решения владельца.
+- Requested и actual model различаются; response model принимается только для точного выбранного ID или его ASCII date suffix. Provider metadata не изобретается.
+- Audit 1 МиБ на файл, 1–3 файла всего, только новый корень. Runtime reload, live server behavior, host abandon и межпроцессная ротация не доказаны unit tests.
+
+Не запускайте `__init__.py` как CLI. Не меняйте live YAML вручную и не заменяйте целиком профиль. `OPENROUTER_API_KEY` используется только штатным scoped resolver владельца; environment/config/секреты соседей не копируются. Native scanner CAUTION требует актуального допуска на точные bytes; не обходите dangerous verdict или live-gateway guard.
+
+## Откат
+
+Baseline с локальными правками, прежние FAIL receipts и старые журналы сохранены. Для обратного переключения сначала выключите NEW и подтвердите отсутствие его loaded callbacks, затем восстановите именно прежнюю source-копию OLD и её собственные settings через поддерживаемые операции. После отдельного owner-разрешения можно вернуть прежнее enabled состояние OLD. Не включайте обе identity, не применяйте `git reset --hard` к чужим/грязным деревьям и не удаляйте новые или старые логи автоматически.
+
+## Архив 0.1.8–0.1.5 — сохранённая история, не результат 0.2.0
+
+Ниже прежний текст сохранён буквально. Его Sol/PPLX/custom-core утверждения, counts, SHA и бюджеты относятся к прежней ревизии; текущий стандартный SDK не объявляется этим текстом поддерживающим all-finals loop. [docs/audit.md](docs/audit.md) также остаётся историческим документом.
 
 ## Стабильная заметка и границы оценки
 
@@ -42,48 +123,3 @@ Main reservation создаётся атомарно до HTTP по owner/sessio
 - Unicode replacement допускается только в egress-копии; исходный logical JSON остаётся неизменным.
 
 Каждая production-правка проверена через focused RED→GREEN и positive controls. Локальная итоговая приёмка: native 221 cases — 216 passed/5 skipped; standalone 213 cases — 208 passed/5 skipped; failures/errors — 0. Пять skips связаны с Windows symlink error 1314. Наборы перекрываются; receipts/JUnit и source hashes сверены отдельно, а не выведены из названий GREEN или отчётов исходного архива. Результат CI для выбранного commit проверяйте в GitHub Actions; эти локальные counts не являются live API или cross-platform доказательством.
-
-## Повторить проверки
-
-Сначала внешним доверенным инструментом проверьте archive SHA, полный список members и контрольные суммы. Не запускайте код/скрипт произвольного полученного ZIP ради его первого доказательства безопасности. Приращения с кодом должны быть прочитаны заранее; Python audit hook — supervision, не OS sandbox.
-
-После source review для unit tests, без SDK/key:
-
-```bash
-python -m venv .venv
-# Активируйте эту среду способом своей ОС.
-python -m pip install -r requirements-dev.txt
-python -B scripts/run_tests.py
-```
-
-Зависимости остаются pytest 9.1.1 и httpx 0.28.1; сеть требуется pip, но не последующим тестам. Runner создаёт synthetic home и отдельно напечатает retained scratch/JUnit/summary. Он не удаляет старые roots. Запуск тестов пишет только тестовые данные; не переносите сюда credentials или рабочие профили.
-
-С verified checkout Hermes и совместимым interpreter/dependencies:
-
-```bash
-python -B scripts/run_tests.py --core PATH_TO_REVIEWED_HERMES_CORE
-```
-
-Default unit и explicit native config tests — разные уровни доказательства. Настоящие PluginContext/namespace reader/validator нельзя заменять permissive SDK mocks. CLI quiet stdout и live model behavior этим не доказываются.
-
-## Установка и настройки — отдельно
-
-Получение source из GitHub не означает installation или reload. Выбирайте полный commit SHA с проверенным CI, затем отдельно выполните native scanner/Doctor перед разрешённой установкой. Команды — в README; старый commit 0.1.4 не включает новые правки. Для каждой устанавливаемой ревизии требуется отдельное решение по актуальному CAUTION.
-
-Не запускайте `__init__.py` как CLI. Не меняйте живой config вручную и не заменяйте целиком профиль. Используйте supported `hermes -p PROFILE config set ...` для согласованных ключей. Ключ `OPENROUTER_API_KEY` предоставляется только штатным scoped secret resolver владельца, не YAML/исходниками/чатом/архивом.
-
-Пилот — advisory после согласования external egress. Scanner CAUTION требует отдельного решения для точного candidate; прошлое согласие не переносится автоматически. Установка/настройки/reload — отдельные проверки. Не перезапускайте действующий gateway/Desktop ради проверки source-пакета.
-
-## Ограничения
-
-- Policy snapshot устраняет доказанное смешение digest/thresholds, но отсутствие atomic native revision не позволяет заявлять обнаружение **всех** не наблюдавшихся переходных ABA настроек.
-- Deadline кооперативный: blocking network phase/DNS/OS I/O может жить дольше срока. Worker не убивается; слот удерживается до natural completion.
-- Полная локальная identity читает весь ответ линейно кусками по 4096 символов. Ограниченный временный буфер не означает hard CPU/wall-clock containment.
-- Sync generation не exact receipt→child mapping; arbitrary late stop нельзя привязать к исполнению, если native producer не несёт identity. Ambiguous event не доказательство успеха.
-- Native redaction не гарантирует распознавания любого свободнотекстового секрета. Egress требует самостоятельного решения владельца.
-- TTL/eviction/restart и ограниченный cache — не durable spending/retry ledger. Вероятности PPLX не facts и не tool permission.
-- Host reload/abandon, cross-owner switches mid-callback, межпроцессная ротация журнала и live inference не объявляются проверенными только на основании unit suite.
-
-## Сохранение и откат
-
-Исходный ZIP, baseline и прежние FAIL receipts сохраняются. Откат code derivative выполняется отдельной обратимой операцией с сохранением последующих правок; это не откат installed copy. Не применять `git reset --hard` или архивные `fixes.patch` к чужой/грязной копии вслепую. Hermes core, установленные плагины, profiles и процессы не входят в эту source-ревизию.

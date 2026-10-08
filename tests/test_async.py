@@ -31,7 +31,7 @@ def test_async_lifecycle_fast_dispatch_no_network_then_trusted_delivery_each_chi
     start(env); launch(env, 2); stop(env, 0); stop(env, 1, 'error', 'Не удалось выполнить проверку')
     assert not env.calls and not env.secrets
     result = delivery(env)
-    assert 'context' in result and 'PPLX' in result['context']
+    assert 'context' in result and 'DECISIONS' in result['context']
     assert len(env.calls) == 2
     assert [p['state']['goal'] for _, p in env.calls] == ['Проверить компонент 0', 'Проверить компонент 1']
     assert env.calls[1][1]['state']['evidence']['status'] == 'error'

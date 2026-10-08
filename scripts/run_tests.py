@@ -21,7 +21,7 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     scratch_parent = options.scratch or Path(os.environ.get('TMPDIR') or tempfile.gettempdir())
     scratch_parent.mkdir(parents=True, exist_ok=True)
-    scratch = Path(tempfile.mkdtemp(prefix='pplx-tests-', dir=str(scratch_parent))).resolve()
+    scratch = Path(tempfile.mkdtemp(prefix='decision-review-tests-', dir=str(scratch_parent))).resolve()
     home, temp, user = scratch / 'home', scratch / 'tmp', scratch / 'user'
     for path in (home, temp, user, scratch / 'local', scratch / 'roaming'):
         path.mkdir()

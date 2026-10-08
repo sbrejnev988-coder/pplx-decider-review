@@ -153,7 +153,7 @@ class Lifecycle:
         for cid, goal, stop in candidates:
             review = self.cached_review(session_id, goal, stop, deadline=end, identity=cid, allow_accept=False, expected_scope=scope)
             summaries.append('Дочерняя сессия ' + cid + ': ' + self.review_note(review, child=True))
-        context = 'PPLX: отдельные проверки завершённых дочерних результатов. Исходные статусы и свидетельства не заменены.\n' + '\n'.join(summaries)
+        context = 'DECISIONS: отдельные оценки завершённых дочерних результатов (Decision Review). Исходные статусы и свидетельства не заменены.\n' + '\n'.join(summaries)
         if len(context) > 16000:
             context = context[:15900] + '\nОграничение: контекст reviewer сокращён до локального лимита; исходные результаты сохранены.'
         with self.store.lock:
@@ -162,7 +162,7 @@ class Lifecycle:
     def review_note(self, review, child=False, guidance=True):
         marker = review['verdict']
         if not review['verified']:
-            return ('PPLX INSPECT: оценку получить не удалось; заключение PPLX отсутствует.\n'
+            return ('DECISIONS INSPECT: оценку получить не удалось; заключение Decision Review отсутствует.\n'
                     + ' '.join(review['errors']))
         answers = review['answers']
         statuses = {'RETRY': 'рекомендуется перепроверка',
@@ -178,18 +178,18 @@ class Lifecycle:
             ('unsupported_success_claim' if child else 'needs_revision',
              'неподтверждённого заявления об успехе' if child else 'необходимости доработки'),
         ]
-        note = f"PPLX {marker}: {statuses[marker]}.\nПо оценке PPLX, вероятность:\n"
+        note = f"DECISIONS {marker}: {statuses[marker]}.\nПо оценке Decision Review, вероятность:\n"
         for index, (key, label) in enumerate(labels):
             value = f"{answers[key]['noul'] * 100:.1f}".replace('.', ',')
             punctuation = '.' if index == len(labels) - 1 else ';'
             note += f"- {label} — {value}%{punctuation}\n"
         if guidance and marker == 'RETRY':
-            note += ('Sol: сначала сверь требования с фактическими результатами. '
+            note += ('Основной агент: сначала сверь требования с фактическими результатами. '
                      'Если подтвердятся недочёты, исправь их. '
                      'Повтор по этой цели допускается не более одного раза; '
                      'автоматически запускать субагента нельзя.')
         elif guidance and marker == 'INSPECT':
-            note += 'Sol: сверь требования с доступными свидетельствами; пока не считай результат подтверждённым.'
+            note += 'Основной агент: сверь требования с доступными свидетельствами; пока не считай результат подтверждённым.'
         else:
             note += 'Это рекомендация проверяющей модели, а не доказательство правильности результата.'
-        return note + '\n' + review['reason']
+        return note + '\nВероятностная оценка не заменяет фактическую проверку.\n' + review['reason']

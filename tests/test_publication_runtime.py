@@ -258,4 +258,4 @@ def test_unload_discards_late_review_and_all_application(publication_env, surfac
         assert result == [None], 'После unload нельзя применять advisory или nudge'
     assert not state['cache'] and not state['nudges'], 'После unload нельзя обновлять retained state'
     assert not runtime.store.sessions
-    assert not (publication_env.home / 'plugin-data/pplx-decider-review/reviews.jsonl').exists(), 'После unload audit write запрещён'
+    assert not (publication_env.home / 'plugin-data/decision-review/reviews.jsonl').exists(), 'После unload audit write запрещён'

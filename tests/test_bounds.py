@@ -62,7 +62,7 @@ def test_log_metadata_only_ru_reasons_rotation_profile_isolation_and_bounded_ids
         summaries.append(summary)
         env.ctx.hooks['transform_tool_result'](tool_name='delegate_task', args={'goal': 'Не журналировать PRIVATE-GOAL'},
             result=json.dumps({'results': [{'status': 'completed', 'summary': summary}]}), session_id='SAFE_SESSION')
-    folder = env.home[0] / 'plugin-data' / 'pplx-decider-review'
+    folder = env.home[0] / 'plugin-data' / 'decision-review'
     logs = list(folder.glob('reviews.jsonl*'))
     assert 1 <= len(logs) <= 3
     assert all(p.stat().st_size <= 2048 for p in logs)
@@ -75,7 +75,7 @@ def test_log_metadata_only_ru_reasons_rotation_profile_isolation_and_bounded_ids
     env.home[0] = env.home[0].parent / 'other-profile'
     env.ctx.hooks['transform_tool_result'](tool_name='delegate_task', args={'goal': 'Проверить компонент'},
         result='{"results":[{"status":"completed","summary":"новый результат"}]}', session_id='p')
-    assert (env.home[0] / 'plugin-data/pplx-decider-review/reviews.jsonl').is_file()
+    assert (env.home[0] / 'plugin-data/decision-review/reviews.jsonl').is_file()
     assert {p: p.read_bytes() for p in first_files} == first_files
 
 @pytest.mark.parametrize('field,value', [('language', 'en'), ('mode', 'automatic_tools'), ('fail_open_on_api_error', False),

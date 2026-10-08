@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-MODEL = 'perplexity/pplx-decider-v1-27b'
+MODEL = 'openai/gpt-6-luna-decisions'
 ROOT = Path(__file__).resolve().parents[1]
 
 class Context:
@@ -39,7 +39,8 @@ def answer_payload(request, completed=.95, reliable=.95, adverse=.05, choice='п
         else:
             answers[name] = {'type': typ, 'score': 3.8, 'confidence': .9,
                              'probabilities': {'0': .01, '1': .01, '2': .01, '3': .11, '4': .86}}
-    return {'id': 'synthetic-response', 'model': MODEL, 'provider': 'Perplexity',
+    # Synthetic metadata is fixed, not inferred from the requested model slug.
+    return {'id': 'synthetic-response', 'model': request['model'], 'provider': 'Synthetic OpenAI',
             'answers': answers, 'usage': {'input_tokens': 10, 'output_tokens': 0, 'cost': .00001}}
 
 @pytest.fixture(autouse=True)
@@ -67,7 +68,7 @@ def env(monkeypatch, tmp_path):
     const = types.ModuleType('hermes_constants'); const.get_hermes_home = lambda: home[0]
     for name, value in [('agent', agent), ('agent.secret_scope', scope), ('agent.redact', red), ('hermes_constants', const)]:
         monkeypatch.setitem(sys.modules, name, value)
-    spec = importlib.util.spec_from_file_location('pplx_review_test', ROOT / '__init__.py')
+    spec = importlib.util.spec_from_file_location('decision_review_test', ROOT / '__init__.py')
     plugin = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, plugin)
     spec.loader.exec_module(plugin)
@@ -102,11 +103,11 @@ class UnitPublicationContext(Context):
 
     def get_config(self, key, default=None):
         config = json.loads(self.config_path.read_text(encoding='utf-8'))
-        return config['plugins']['entries']['pplx-decider-review']['settings'].get(key, default)
+        return config['plugins']['entries']['decision-review']['settings'].get(key, default)
 
     def set_config(self, key, value):
         config = json.loads(self.config_path.read_text(encoding='utf-8'))
-        config['plugins']['entries']['pplx-decider-review']['settings'][key] = value
+        config['plugins']['entries']['decision-review']['settings'][key] = value
         self.config_path.write_text(json.dumps(config, ensure_ascii=False), encoding='utf-8')
         assert self.get_config(key) == value
 
@@ -134,7 +135,7 @@ def publication_env(request, record_property, scenario):
         settings['reviewer_model'] = MODEL
     config_path = home / 'config.yaml'
     config_path.write_text(json.dumps({'plugins': {'entries': {
-        'pplx-decider-review': {'settings': settings}}}}), encoding='utf-8')
+        'decision-review': {'settings': settings}}}}), encoding='utf-8')
     unit.ctx = UnitPublicationContext(config_path)
     runtime = start(unit)
     request.addfinalizer(runtime.close)

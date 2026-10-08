@@ -46,8 +46,8 @@ def test_cached_final_expires_independent_of_active_session(env, monkeypatch):
     hook = env.ctx.hooks['transform_llm_output']
     original = 'Компонент готов; тесты прошли.'
     first = hook(session_id='p', response_text=original)
-    assert first.startswith(original) and 'PPLX ACCEPT' in first
-    assert 'PPLX ACCEPT' in hook(session_id='p', response_text=original)
+    assert first.startswith(original) and 'DECISIONS ACCEPT' in first
+    assert 'DECISIONS ACCEPT' in hook(session_id='p', response_text=original)
     assert len(env.calls) == 1
     state = runtime.main_state('p')
 
@@ -56,13 +56,13 @@ def test_cached_final_expires_independent_of_active_session(env, monkeypatch):
     begin(env)
     assert runtime.main_state('p') is state
     expired = hook(session_id='p', response_text=original)
-    assert expired.startswith(original) and 'PPLX INSPECT' in expired
-    assert 'PPLX ACCEPT' not in expired and len(env.calls) == 1
+    assert expired.startswith(original) and 'DECISIONS INSPECT' in expired
+    assert 'DECISIONS ACCEPT' not in expired and len(env.calls) == 1
 
     env.ctx.hooks['pre_llm_call'](session_id='p', task_id='task-main', turn_id='ttl-next-turn',
                                 user_message='Реализовать компонент и проверить тестами')
     fresh = hook(session_id='p', response_text=original)
-    assert fresh.startswith(original) and 'PPLX ACCEPT' in fresh
+    assert fresh.startswith(original) and 'DECISIONS ACCEPT' in fresh
     assert len(env.calls) == 2
 
 
@@ -88,7 +88,7 @@ def test_main_low_metric_even_strong_quality_cannot_accept(env):
         return httpx.Response(200, json=d)
     env.replies.append(reply)
     text = env.ctx.hooks['transform_llm_output'](session_id='p', response_text='Компонент частично выполнен.')
-    assert 'PPLX RETRY' in text
+    assert 'DECISIONS RETRY' in text
 
 
 def test_error_log_has_no_raw_http_body_credentials_or_prompt(env):
@@ -96,7 +96,7 @@ def test_error_log_has_no_raw_http_body_credentials_or_prompt(env):
     start(env)
     env.replies.append(lambda req, p: httpx.Response(429, text='RAW_SECRET_BODY'))
     run_child(env, 'RAW_PRIVATE_EVIDENCE')
-    path = env.home[0] / 'plugin-data/pplx-decider-review/reviews.jsonl'
+    path = env.home[0] / 'plugin-data/decision-review/reviews.jsonl'
     text = path.read_text(encoding='utf-8')
     assert 'RAW_SECRET_BODY' not in text and 'RAW_PRIVATE_EVIDENCE' not in text and 'synthetic-owner-key' not in text
     assert 'HTTP 429' in text

@@ -1,4 +1,4 @@
-"""Сообщения PPLX понятны человеку и не превращают оценки в доказанные ошибки."""
+"""Сообщения Decision Review понятны человеку и не превращают оценки в доказанные ошибки."""
 import httpx
 import json
 from importlib import import_module
@@ -24,8 +24,8 @@ def test_retry_note_explains_probabilities_without_claiming_proven_defects(env):
         output = runtime.transform_llm_output(session_id='p', response_text=original)
         assert output.startswith(original + '\n\n---\n')
         note = output.split('\n\n---\n', 1)[1]
-        assert note.startswith('PPLX RETRY: рекомендуется перепроверка.\n')
-        assert 'По оценке PPLX, вероятность:' in note
+        assert note.startswith('DECISIONS RETRY: рекомендуется перепроверка.\n')
+        assert 'По оценке Decision Review, вероятность:' in note
         for line in (
             '- полного выполнения задачи — 25,6%;',
             '- подтверждённости заявлений — 98,1%;',
@@ -35,6 +35,7 @@ def test_retry_note_explains_probabilities_without_claiming_proven_defects(env):
         ):
             assert line in note
         assert 'Sol:' not in note
+        assert 'Основной агент:' not in note
         assert 'Это рекомендация проверяющей модели, а не доказательство правильности результата.' in note
         assert 'Вероятностная оценка не заменяет фактическую проверку' in note
         assert 'Ограничение: эта заметка не запускает новый цикл работы.' in note
@@ -60,6 +61,7 @@ def test_child_retry_recommendation_requires_actual_verification(env):
         assert transformed['results'] == original['results']
         assert review['verdict'] == 'RETRY'
         assert 'Если подтвердятся недочёты, исправь их.' in review['recommendation']
+        assert review['recommendation'].startswith('Основной агент:') and 'Sol' not in review['recommendation']
         assert 'не более одного раза' in review['recommendation']
         assert 'автоматически запускать субагента нельзя' in review['recommendation']
         assert len(env.calls) == 1
@@ -73,7 +75,7 @@ def test_unavailable_note_has_no_invented_probabilities(env):
         review = import_module(env.p.__name__ + '.protocol').unavailable('Истёк срок ожидания reviewer.')
         before = json.loads(json.dumps(review))
         note = runtime.review_note(review)
-        assert note.startswith('PPLX INSPECT: оценку получить не удалось; заключение PPLX отсутствует.\n')
+        assert note.startswith('DECISIONS INSPECT: оценку получить не удалось; заключение Decision Review отсутствует.\n')
         assert 'проверка не подтверждена' not in note
         assert 'Истёк срок ожидания reviewer.' in note
         assert '%' not in note and review == before

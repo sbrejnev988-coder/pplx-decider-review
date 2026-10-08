@@ -2,6 +2,8 @@
 
 Run via lanes/plugin/run_native_onepass.py under the selected native Python.
 PluginContext, config validator, home/secret scopes and hook dispatcher are real.
+The no-edit all-finals cases require a host that actually emits those metadata;
+the current standard SDK is not claimed to support that producer path.
 """
 from __future__ import annotations
 import ast
@@ -21,17 +23,17 @@ import hermes_constants as homes
 import agent.secret_scope as secrets
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL = 'perplexity/pplx-decider-v1-27b'
+MODEL = 'openai/gpt-6-luna-decisions'
 ENDPOINT = 'https://openrouter.ai/api/alpha/decisions'
 HOOKS = {'pre_llm_call', 'transform_tool_result', 'subagent_start', 'subagent_stop', 'pre_verify', 'transform_llm_output'}
 GOAL = 'Самостоятельно проверить факты и вернуть подтверждённый результат'
 DRAFT = 'Первый черновик: результат готов, свидетельств пока нет.'
 FINAL = 'Итог модели: неподтверждённое заявление снято; ограничения указаны.'
 
-# Execute only this trusted baseline pure function and its literal constant.
+# Execute only the hash-pinned current-source pure fixture and its literal constant.
 base = ROOT / 'tests/conftest.py'
 import hashlib
-assert hashlib.sha256(base.read_bytes()).hexdigest() == 'e2c19315800d0711c463e55e8891d352da43b206f1d5fc269b00c2cea247e47a'
+assert hashlib.sha256(base.read_bytes()).hexdigest() == '3748ea896b3d69e6900e032d8602842c5a2521a42c834607393f1b8c4caa26ac'
 tree = ast.parse(base.read_text(encoding='utf-8'))
 nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'answer_payload'
          or isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'MODEL' for t in n.targets)]
@@ -65,7 +67,7 @@ class NativeOnePass(unittest.TestCase):
                   'callback_budget_seconds': 2, 'timeout_seconds': 1, 'log_enabled': False}
         config.update(settings)
         home.joinpath('config.yaml').write_text(json.dumps({'model': {'default': 'never-use-main'},
-            'plugins': {'entries': {'pplx-decider-review': {'settings': config}}}}), encoding='utf-8')
+            'plugins': {'entries': {'decision-review': {'settings': config}}}}), encoding='utf-8')
         ht = homes.set_hermes_home_override(home)
         st = secrets.set_secret_scope({'OPENROUTER_API_KEY': 'synthetic-only'}, profile_home=str(home))
         manifest = native.parse_manifest_file(ROOT / 'plugin.yaml', ROOT, 'user', '')
@@ -170,9 +172,9 @@ class NativeOnePass(unittest.TestCase):
         self.begin(env)
         self.adverse(env)
         nudge = self.pre(env)
-        self.assertIsNotNone(nudge, 'Explicit native all_finals must deliver PPLX before final without edits')
+        self.assertIsNotNone(nudge, 'Explicit native all_finals must deliver Decisions feedback before final without edits')
         self.assertEqual(nudge['action'], 'continue')
-        self.assertIn('Sol', nudge['message'])
+        self.assertIn('Основной агент', nudge['message'])
         self.assertIn('неподтверж', nudge['message'])
         self.assertIn('вероятность', nudge['message'])
         self.assertIn('самостоятельно', nudge['message'])
@@ -189,11 +191,14 @@ class NativeOnePass(unittest.TestCase):
             self.assertIn('исходный черновик', text)
             self.assertIn('verification_pass_status=' + (status or 'unknown'), text)
             self.assertNotIn('Sol:', text)
-            self.assertNotIn('PPLX ACCEPT', text)
+            self.assertNotIn('Основной агент:', text)
+            self.assertNotIn('DECISIONS ACCEPT', text)
             self.assertNotIn('Sol исправил', text)
+            self.assertNotIn('Основной агент исправил', text)
             if status != 'completed':
                 self.assertNotIn('проход Sol завершён', text)
-            self.assertEqual(len(env.calls), 1, 'Correction must not trigger a second PPLX request')
+                self.assertNotIn('завершённом проходе основного агента', text)
+            self.assertEqual(len(env.calls), 1, 'Correction must not trigger a second Decisions request')
         self.assertIsNone(self.pre(env, final_response=FINAL))
         self.assertIsNone(self.pre(env, final_response=FINAL, attempt=1))
 
@@ -207,7 +212,7 @@ class NativeOnePass(unittest.TestCase):
         text = self.final(env, response_text=DRAFT)
         self.assertTrue(text.startswith(DRAFT))
         self.assertEqual(len(env.calls), 1)
-        self.assertIn('PPLX ACCEPT', text)
+        self.assertIn('DECISIONS ACCEPT', text)
         self.assertIsNone(self.pre(env, final_response=FINAL, changed_paths=['C:/synthetic/a.py']))
         self.assertEqual(len(env.calls), 1)
 
@@ -235,7 +240,7 @@ class NativeOnePass(unittest.TestCase):
         self.assertIsNone(self.pre(env))
         text = self.final(env, verification_pass_status='requested')
         self.assertTrue(text.startswith(FINAL))
-        self.assertIn('заключение PPLX отсутствует', text)
+        self.assertIn('заключение Decision Review отсутствует', text)
         self.assertEqual(len(env.calls), 1)
         self.begin(env, turn='turn-2')
         env.ctx.set_config('reviewer_model', 'wrong-model')
@@ -243,7 +248,7 @@ class NativeOnePass(unittest.TestCase):
         self.assertEqual(len(env.calls), 1)
         text = self.final(env, verification_pass_status='completed')
         self.assertTrue(text.startswith(FINAL))
-        self.assertIn('заключение PPLX отсутствует', text)
+        self.assertIn('заключение Decision Review отсутствует', text)
         self.assertEqual(len(env.calls), 1)
 
     def test_concurrent_callback_reserves_before_http_and_single_nudge(self):
@@ -274,7 +279,7 @@ class NativeOnePass(unittest.TestCase):
         self.assertEqual(len(env.calls), 1)
         self.assertIsNone(self.pre(env, final_response=FINAL))
         text = self.final(env, verification_pass_status='completed')
-        self.assertIn('PPLX RETRY', text)
+        self.assertIn('DECISIONS RETRY', text)
         self.assertEqual(len(env.calls), 1)
 
     def test_receipt_independent_of_caller_and_cache_miss_after_correction(self):
@@ -291,16 +296,16 @@ class NativeOnePass(unittest.TestCase):
         state['cache'].clear()
         state.pop('last_final', None)
         text = self.final(env, verification_pass_status='completed')
-        self.assertIn('PPLX INSPECT', text)
+        self.assertIn('DECISIONS INSPECT', text)
         self.assertIn('70,0%', text)
         self.assertNotIn('caller-mutated', text)
-        self.assertNotIn('PPLX ACCEPT', text)
+        self.assertNotIn('DECISIONS ACCEPT', text)
         self.assertEqual(len(env.calls), 1)
         # Assessment TTL invalidates reuse, never the turn's HTTP budget.
         now = env.runtime.store.clock()
         env.runtime.store.clock = lambda: now + 301
         text = self.final(env, verification_pass_status='completed')
-        self.assertIn('заключение PPLX отсутствует', text)
+        self.assertIn('заключение Decision Review отсутствует', text)
         self.assertEqual(len(env.calls), 1)
 
     def test_new_native_turn_repeated_goal_resets_only_main_cap(self):
@@ -313,7 +318,7 @@ class NativeOnePass(unittest.TestCase):
         self.begin(env, turn='turn-2')
         self.adverse(env)
         self.assertIsNotNone(self.pre(env), 'Same goal in a new native turn has its own main slot')
-        self.assertIn('PPLX RETRY', self.final(env, verification_pass_status='completed'))
+        self.assertIn('DECISIONS RETRY', self.final(env, verification_pass_status='completed'))
         self.assertEqual(len(env.calls), 2)
         def child(summary):
             self.adverse(env)
@@ -331,7 +336,7 @@ class NativeOnePass(unittest.TestCase):
             text = self.final(env, verification_pass_status=status)
             self.assertTrue(text.startswith(FINAL))
             self.assertIn('DRAFT', text)
-            self.assertIn('заключение PPLX отсутствует', text)
+            self.assertIn('заключение Decision Review отсутствует', text)
         self.assertFalse(env.calls)
 
     def test_config_change_new_goal_and_ttl_do_not_adopt_old_receipt(self):
@@ -341,12 +346,12 @@ class NativeOnePass(unittest.TestCase):
         self.assertIsNotNone(self.pre(env))
         env.ctx.set_config('reviewer_model', 'wrong-model')
         text = self.final(env, verification_pass_status='completed')
-        self.assertIn('заключение PPLX отсутствует', text)
-        self.assertNotIn('PPLX RETRY', text)
+        self.assertIn('заключение Decision Review отсутствует', text)
+        self.assertNotIn('DECISIONS RETRY', text)
         env.ctx.set_config('reviewer_model', MODEL)
         self.begin(env, goal='Новая цель в той же native сессии и том же ходе')
         text = self.final(env, verification_pass_status='requested')
-        self.assertIn('заключение PPLX отсутствует', text)
+        self.assertIn('заключение Decision Review отсутствует', text)
         self.assertIsNone(self.pre(env, final_response=FINAL))
         self.assertEqual(len(env.calls), 1)
         now = env.runtime.store.clock()

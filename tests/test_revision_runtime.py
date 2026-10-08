@@ -141,7 +141,7 @@ def test_old_scope_cannot_apply_after_transition(publication_env, surface):
     if surface in ('cache', 'ttl'): assert not results[0]['verified']
     else: assert results == [None]
     assert not state['cache'] and not state['nudges'] and not state.get('last_final')
-    assert not (publication_env.home / 'plugin-data/pplx-decider-review/reviews.jsonl').exists()
+    assert not (publication_env.home / 'plugin-data/decision-review/reviews.jsonl').exists()
 
 
 def test_goal_without_turn_clears_trace_and_fences_late_observer(publication_env, monkeypatch):

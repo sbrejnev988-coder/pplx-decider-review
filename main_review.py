@@ -77,7 +77,8 @@ class MainReview:
                     and once['review_json'] is not None
                     and 0 <= self.store.clock() - once['time'] < scope[7].cache_ttl):
                 return json.loads(once['review_json'])
-            return unavailable('Receipt исходного черновика отсутствует, ещё не готов либо потерял актуальный scope; повторный PPLX-запрос не выполняется.')
+            requested_model = once['scope'][7].model if once is not None else scope[7].model
+            return unavailable('Receipt исходного черновика отсутствует, ещё не готов либо потерял актуальный scope; повторный Decisions-запрос не выполняется.', requested_model=requested_model)
 
     def admit_main_request(self, scope, reservation):
         # Called under the same lock at the worker's actual request point.
@@ -93,13 +94,16 @@ class MainReview:
 
     def final_review(self, session_id, state, response, paths=None, expected_scope=None, main_reservation=None):
         from .protocol import unavailable
+        policy = expected_scope[7] if expected_scope is not None else self.snapshot_policy()
+        def reject(reason):
+            return unavailable(reason, requested_model=policy.model)
         if not isinstance(response, str):
-            return unavailable('Некорректный тип финального ответа.')
+            return reject('Некорректный тип финального ответа.')
         response_identity = _response_identity(response)
         with self.store.lock:
             scope = expected_scope if expected_scope is not None else self.capture_scope(session_id, state=state)
             if not self.scope_current(scope) or scope[1] is not state:
-                return unavailable('Изменилась сессия, задача либо конфигурация reviewer.')
+                return reject('Изменилась сессия, задача либо конфигурация reviewer.')
             goal = state['goal']
             trace = list(state.get('tool_evidence', []))
             candidate = fingerprint([goal, response_identity, trace, scope[7].tag])
@@ -110,7 +114,7 @@ class MainReview:
             if policy.valid and policy.mode == 'bounded' and policy.enabled and policy.main_enabled:
                 if once is None:
                     if main_reservation is not None:
-                        return unavailable('Утрачен слот исходного черновика; повторный PPLX-запрос не выполняется.')
+                        return reject('Утрачен слот исходного черновика; повторный Decisions-запрос не выполняется.')
                     once = self.new_main_reservation(scope, draft=False)
                     state['main_review_once'] = once
                 once['candidate'] = candidate
@@ -127,13 +131,13 @@ class MainReview:
                                         identity=turn, expected_scope=scope, main_reservation=once)
         with self.store.lock:
             if not self.scope_current(scope):
-                return unavailable('Изменилась сессия, задача либо конфигурация reviewer.')
+                return reject('Изменилась сессия, задача либо конфигурация reviewer.')
             state['last_final'] = {'candidate': candidate, 'review': json.loads(json.dumps(review)), 'paths': list(paths or []),
                                     'time': self.store.clock(), 'turn': turn}
             if once is not None and state.get('main_review_once') is once and once['review_json'] is None:
                 receipt = json.dumps(review, ensure_ascii=True, allow_nan=False)
                 if len(receipt) > 16000:
-                    receipt = json.dumps(unavailable('Превышен лимит receipt исходного черновика.'))
+                    receipt = json.dumps(reject('Превышен лимит receipt исходного черновика.'))
                 once['review_json'], once['time'] = receipt, self.store.clock()
                 review = json.loads(receipt)
             return review
@@ -165,9 +169,9 @@ class MainReview:
             review = self.final_review(session_id, state, final_response, paths, expected_scope=scope, main_reservation=once)
             receipt = json.dumps(review, ensure_ascii=True, allow_nan=False)
             if len(receipt) > 16000:
-                receipt = json.dumps(unavailable('Превышен лимит receipt исходного черновика.'))
+                receipt = json.dumps(unavailable('Превышен лимит receipt исходного черновика.', requested_model=policy.model))
         except Exception:
-            receipt = json.dumps(unavailable('Оценка исходного черновика недоступна.'))
+            receipt = json.dumps(unavailable('Оценка исходного черновика недоступна.', requested_model=policy.model))
         with self.store.lock:
             if not self.scope_current(scope) or state.get('main_review_once') is not once:
                 return None
@@ -177,13 +181,13 @@ class MainReview:
             review = json.loads(once['review_json'])
             if not review['verified'] or review['verdict'] not in ('RETRY', 'INSPECT'):
                 return None
-            once['requested'] = True  # Delivery requested, NEVER proof Sol completed a pass.
+            once['requested'] = True  # Delivery requested, NEVER proof the main agent completed a pass.
             return {'action': 'continue', 'message':
-                    'Область PPLX: исходный черновик (DRAFT).\n' + self.review_note(review, guidance=False)
-                    + '\nSol: самостоятельно сверь факты, требования и реальные свидетельства. '
+                    'DECISIONS: исходный черновик (DRAFT).\n' + self.review_note(review, guidance=False)
+                    + '\nОсновной агент: самостоятельно сверь факты, требования и реальные свидетельства. '
                       'Исправь только подтверждённые ошибки; неподтверждённые замечания явно обозначь как неподтверждённые. '
-                      'Это единственный проход проверки в этом native ходе; автоматически запускать субагентов нельзя. '
-                      'Вероятности PPLX — оценка, не истина и не разрешение на действия.'}
+                      'Повторный проход в этом native ходе не запрашивай; автоматически запускать субагентов нельзя. '
+                      'Вероятности Decision Review — оценка, не истина и не разрешение на действия.'}
 
     def transform_llm_output(self, session_id='', response_text='', verification_pass_status=None, **kwargs):
         from .protocol import unavailable
@@ -224,16 +228,16 @@ class MainReview:
                 if once is not None and (once['draft'] or once.get('candidate') != candidate):
                     draft_scope = True
                     review = self.main_receipt(scope, once)
-        note = ('Область PPLX: исходный черновик (DRAFT), не текущий финальный ответ.\n' if draft_scope else '')
+        note = ('DECISIONS: исходный черновик (DRAFT), не текущий финальный ответ.\n' if draft_scope else '')
         note += self.review_note(review, guidance=False)
         if draft_scope:
-            note += '\nПовторная PPLX-оценка финала не выполнялась.'
+            note += '\nПовторная Decisions-оценка финала не выполнялась.'
             if verification_pass_status == 'completed':
-                note += '\nverification_pass_status=completed: native core сообщил о завершённом проходе Sol; это не доказывает исправление каждого замечания.'
+                note += '\nverification_pass_status=completed: native core сообщил о завершённом проходе основного агента; это не доказывает исправление каждого замечания.'
             elif verification_pass_status == 'requested':
-                note += '\nverification_pass_status=requested: проход Sol запрошен; завершение не подтверждено.'
+                note += '\nverification_pass_status=requested: проход основного агента запрошен; завершение не подтверждено.'
             else:
-                note += '\nverification_pass_status=unknown: native подтверждение завершения прохода Sol отсутствует.'
+                note += '\nverification_pass_status=unknown: native подтверждение завершения прохода основного агента отсутствует.'
         if not review['verified'] or review['verdict'] != 'ACCEPT':
             note += '\nОграничение: эта заметка не запускает новый цикл работы. Фактическую проверку и исправления плагин не выполняет.'
         with self.store.lock:
