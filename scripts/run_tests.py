@@ -63,6 +63,7 @@ def main() -> int:
     ini, junit, log = scratch / 'pytest.ini', scratch / 'junit.xml', scratch / 'pytest.log'
     ini.write_text('[pytest]\n', encoding='utf-8')
     args = ['-c', str(ini), '--rootdir=' + str(root), '--import-mode=importlib',
+            '--confcutdir=' + str(root / 'tests'),
             '-p', 'no:cacheprovider', '--capture=sys', '-o', 'junit_family=xunit1', '-o', 'log_file=' + str(log),
             '--basetemp=' + str(temp / 'pytest'), '--junitxml=' + str(junit),
             '-q', '--tb=short', str(root / 'tests')]
